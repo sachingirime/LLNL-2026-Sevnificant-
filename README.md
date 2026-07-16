@@ -23,3 +23,9 @@ By the end of the challenge, participants should understand how to move from sta
 - `presentation/` - introductory challenge slides
 - `.agents/skills/` - project-specific Codex skills
 - `.codex/agents/` - project-specific Codex subagent definitions
+
+## Contact
+
+Haichao Miao
+Research Scientist at LLNL
+miao1 (at) llnl.gov
