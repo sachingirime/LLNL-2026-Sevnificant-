@@ -1,0 +1,6 @@
+# Copy this block into ~/.codex/config.toml, then restart Codex CLI.
+# Use the Python interpreter from the environment where requirements.txt is installed.
+[mcp_servers.segmentation-tools]
+command = "/absolute/path/to/python"
+args = ["/home/sachin/research/LLNL DSC 2026/llnl_data_science_challenge_2026/src/mcp_server.py"]
+env = {}
