@@ -7,6 +7,13 @@ import matplotlib.pyplot as plt
 import tifffile
 from fastmcp import FastMCP
 
+try:
+    # Package import for tests and programmatic use.
+    from .skeletonization import skeletonize_mask
+except ImportError:
+    # Script import when FastMCP starts this file via ``python src/mcp_server.py``.
+    from skeletonization import skeletonize_mask
+
 # Initialize the MCP server
 mcp = FastMCP("CT Segmentation")
 
@@ -125,7 +132,39 @@ def skeletonize(input_filepath: str, output_filepath: str) -> str:
     Returns:
         A status message indicating success and the save location, or an error message.
     """
-    pass # Implementation goes here, calling skeletonize_mask internally
+    if not os.path.isfile(input_filepath):
+        return f"Error: input file not found at {input_filepath}"
+    if os.path.splitext(input_filepath)[1].lower() != ".npy":
+        return "Error: input_filepath must reference a '.npy' segmentation mask"
+    if os.path.splitext(output_filepath)[1].lower() != ".npy":
+        return "Error: output_filepath must end with '.npy'"
+
+    try:
+        mask = np.load(input_filepath, mmap_mode="r")
+    except (OSError, ValueError) as error:
+        return f"Error: could not load segmentation mask: {error}"
+
+    if mask.ndim != 3:
+        return f"Error: expected a 3D mask, got shape {mask.shape}"
+    if not np.any(mask):
+        return "Error: input mask has no foreground voxels to skeletonize"
+
+    output_directory = os.path.dirname(os.path.abspath(output_filepath))
+    os.makedirs(output_directory, exist_ok=True)
+
+    try:
+        extracted_skeleton = skeletonize_mask(input_filepath, output_filepath)
+    except (OSError, ValueError, TypeError) as error:
+        return f"Error: could not skeletonize mask: {error}"
+
+    if extracted_skeleton is None:
+        return "Error: skeletonization did not produce an output"
+
+    return (
+        f"Saved 3D skeleton to {output_filepath} "
+        f"(shape={extracted_skeleton.shape}, "
+        f"skeleton_voxels={int(np.count_nonzero(extracted_skeleton))})"
+    )
 
 if __name__ == "__main__":
     # Run the FastMCP server, exposing the tools over standard I/O (default)
