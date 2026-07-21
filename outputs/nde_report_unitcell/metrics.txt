@@ -1,0 +1,23 @@
+shape: (256, 256, 256)
+voxels_total: 16777216
+mean_intensity: 0.0005390668520703912
+std_intensity: 0.002418240299448371
+min_intensity: -0.003128750016912818
+max_intensity: 0.015257691964507103
+mask_voxels: 717852
+mask_pct: 4.278731346130371
+mask_components_26: 1
+masked_mean: 0.011695658788084984
+background_mean: 4.036835889564827e-05
+otsu_threshold: 0.005813093855977058
+threshold_mask_dice: 1.0
+threshold_mask_iou: 1.0
+skeleton_voxels: 3182
+skeleton_pct_mask: 0.4432668572351961
+skeleton_components_26: 1
+endpoints: 39
+junction_voxels: 137
+segment_edges: 3244
+skeleton_length_voxel_units: 4605.089419200561
+mean_degree: 2.0389692017598993
+max_degree: 6
