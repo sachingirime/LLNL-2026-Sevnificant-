@@ -1,0 +1,10 @@
+# Project-local Codex settings for LLNL-2026-Sevnificant-.
+# These values override matching settings in ~/.codex/config.toml.
+
+model = "gpt-5.6-sol"
+model_reasoning_effort = "low"
+personality = "pragmatic"
+[mcp_servers.segmentation-tools]
+command = "/opt/homebrew/bin/python3"
+args = ["/Users/annanguyen/llnl/LLNL-2026-Sevnificant-/src/mcp_server.py"]
+env = {}
