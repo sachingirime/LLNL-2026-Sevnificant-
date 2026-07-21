@@ -18,16 +18,6 @@ except ImportError:
 mcp = FastMCP("CT Segmentation")
 
 
-def _load_volume(input_filepath: str) -> np.ndarray:
-    """Loads a 3D array from a .npy or .tif/.tiff file."""
-    ext = os.path.splitext(input_filepath)[1].lower()
-    if ext == ".npy":
-        return np.load(input_filepath)
-    if ext in (".tif", ".tiff"):
-        return tifffile.imread(input_filepath)
-    raise ValueError(f"Unsupported file type '{ext}'. Expected .npy, .tif, or .tiff.")
-
-
 @mcp.tool()
 def segment_ct_dataset(input_filepath: str, output_filepath: str, threshold: float) -> str:
     """
@@ -74,51 +64,46 @@ def segment_ct_dataset(input_filepath: str, output_filepath: str, threshold: flo
         f"foreground_voxels={foreground_voxels})"
     )
 
+def _load_volume(path: str) -> np.ndarray:
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".npy":
+        return np.load(path)
+    if ext in (".tif", ".tiff"):
+        return np.asarray(__import__("tifffile").imread(path))
+    raise ValueError("unsupported file type")
+
+def _pick_slice(volume: np.ndarray, index: int, axis: int) -> np.ndarray:
+    return np.take(volume, index, axis=axis)
+
+def _save_slice_image(array: np.ndarray, destination: str, label: str) -> None:
+    folder = os.path.dirname(os.path.abspath(destination))
+    os.makedirs(folder, exist_ok=True)
+
+    fig = plt.figure(figsize=(5, 5), facecolor="white")
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.imshow(array, cmap="gray")
+    ax.set_title(label)
+    ax.axis("off")
+    fig.savefig(destination, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
 @mcp.tool()
 def visualize_slice(input_filepath: str, output_filepath: str, slice_index: int, axis: int = 0) -> str:
-    """
-    Loads a 3D CT dataset from a .npy or .tif file and saves a visualization of a specific slice to an image file.
-
-    Args:
-        input_filepath: Path to the input .npy or .tif file containing the 3D CT data.
-        output_filepath: Path indicating where the output image should be saved (e.g., .png).
-        slice_index: The index of the slice to visualize.
-        axis: The axis along which to take the slice (0, 1, or 2). Default is 0.
-
-    Returns:
-        A status message indicating success and the save location, or an error message.
-    """
     if not os.path.exists(input_filepath):
         return f"Error: input file not found at {input_filepath}"
     if axis not in (0, 1, 2):
         return f"Error: axis must be 0, 1, or 2 (got {axis})"
 
-    try:
-        volume = _load_volume(input_filepath)
-    except ValueError as e:
-        return f"Error: {e}"
-
+    volume = _load_volume(input_filepath)
     if volume.ndim != 3:
         return f"Error: expected a 3D array, got shape {volume.shape}"
+
     if not (0 <= slice_index < volume.shape[axis]):
-        return (
-            f"Error: slice_index {slice_index} out of range for axis {axis} "
-            f"with size {volume.shape[axis]}"
-        )
+        return f"Error: slice_index {slice_index} out of range for axis {axis}"
 
-    slice_2d = np.take(volume, slice_index, axis=axis)
-
-    out_dir = os.path.dirname(os.path.abspath(output_filepath))
-    os.makedirs(out_dir, exist_ok=True)
-
-    plt.figure(figsize=(6, 6))
-    plt.imshow(slice_2d, cmap="gray")
-    plt.title(f"Slice {slice_index} (axis={axis}) of {os.path.basename(input_filepath)}")
-    plt.axis("off")
-    plt.savefig(output_filepath, bbox_inches="tight", dpi=150)
-    plt.close()
-
-    return f"Saved slice {slice_index} (axis={axis}) visualization to {output_filepath}"
+    plane = _pick_slice(volume, slice_index, axis)
+    _save_slice_image(plane, output_filepath, f"slice {slice_index}")
+    return f"Saved slice {slice_index} visualization to {output_filepath}"
 
 @mcp.tool()
 def skeletonize(input_filepath: str, output_filepath: str) -> str:
