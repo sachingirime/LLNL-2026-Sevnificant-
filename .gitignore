@@ -175,3 +175,9 @@ result
 
 # Large local datasets (CT TIFFs, STLs, JSON) — not pushed to GitHub
 data/
+
+# Generated volume arrays. A full-resolution 9x9x9 mask is ~519 MB, well past
+# GitHub's 100 MB file limit — keep them local and share the PNG previews and
+# the manifest instead. (Already-tracked .npy files under outputs/ are
+# unaffected by this rule.)
+outputs/**/*.npy

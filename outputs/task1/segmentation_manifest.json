@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-07-21T18:43:33.011393+00:00",
+  "runs": [
+    {
+      "input": "data/9x9x9_octet_lattice/9x9x9_octet_lattice.tif",
+      "dataset": "9x9x9_octet_lattice",
+      "status": "ok",
+      "shape": [
+        761,
+        815,
+        837
+      ],
+      "threshold": 40127.0,
+      "threshold_source": "otsu(stride=4)",
+      "mask": "outputs/task1/9x9x9_octet_lattice/9x9x9_octet_lattice_segmentation_threshold_40127.npy",
+      "previews": [
+        "outputs/task1/9x9x9_octet_lattice/9x9x9_octet_lattice_segmented_slice_380_axis0.png",
+        "outputs/task1/9x9x9_octet_lattice/9x9x9_octet_lattice_segmented_slice_407_axis1.png",
+        "outputs/task1/9x9x9_octet_lattice/9x9x9_octet_lattice_segmented_slice_418_axis2.png"
+      ]
+    },
+    {
+      "input": "data/missing_struts/tif_stacks/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif",
+      "dataset": "missing_struts",
+      "status": "duplicate",
+      "duplicate_of": "data/9x9x9_octet_lattice/9x9x9_octet_lattice.tif"
+    },
+    {
+      "input": "data/unitcell/unitcell.npy",
+      "dataset": "unitcell",
+      "status": "ok",
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "threshold": 0.005,
+      "threshold_source": "pinned",
+      "mask": "outputs/task1/unitcell/unitcell_segmentation_threshold_0.005.npy",
+      "previews": [
+        "outputs/task1/unitcell/unitcell_segmented_slice_128_axis0.png",
+        "outputs/task1/unitcell/unitcell_segmented_slice_128_axis1.png",
+        "outputs/task1/unitcell/unitcell_segmented_slice_128_axis2.png"
+      ]
+    }
+  ]
+}

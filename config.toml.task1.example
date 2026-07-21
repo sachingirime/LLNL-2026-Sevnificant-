@@ -1,6 +1,16 @@
 # Copy this block into ~/.codex/config.toml, then restart Codex CLI.
-# Use the Python interpreter from the environment where requirements.txt is installed.
+#
+# Both paths must be absolute, and both differ per machine — Anna and Lavanya
+# must substitute their own before this works:
+#   command -> the Python interpreter of the env where requirements.txt is installed.
+#              Find yours with:  python -c "import sys; print(sys.executable)"
+#   args[0] -> the absolute path to src/mcp_server.py in your clone of this repo.
+#              Find yours with:  echo "$(pwd)/src/mcp_server.py"
+#
+# Verify with `/mcp` inside Codex CLI. You should see three tools:
+#   segment_ct_dataset (Task 1), visualize_slice (Task 2), skeletonize (Task 3).
+
 [mcp_servers.segmentation-tools]
-command = "/absolute/path/to/python"
+command = "/home/sachin/miniconda3/envs/dssi_env/bin/python"
 args = ["/home/sachin/research/LLNL DSC 2026/llnl_data_science_challenge_2026/src/mcp_server.py"]
 env = {}

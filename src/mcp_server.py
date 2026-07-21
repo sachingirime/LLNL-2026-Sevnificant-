@@ -34,7 +34,7 @@ def segment_ct_dataset(input_filepath: str, output_filepath: str, threshold: flo
     Segments a 3D CT dataset based on a given density threshold value.
 
     Args:
-        input_filepath: Path to the input .npy file containing the 3D CT scan data.
+        input_filepath: Path to the input .npy or .tif/.tiff file containing the 3D CT scan data.
         output_filepath: Path indicating where the segmented .npy file should be saved.
         threshold: The density value to use as a threshold. Voxels >= threshold will be set to 1, others to 0.
 
@@ -49,7 +49,7 @@ def segment_ct_dataset(input_filepath: str, output_filepath: str, threshold: flo
         return "Error: output_filepath must end with '.npy'"
 
     try:
-        volume = np.load(input_filepath)
+        volume = _load_volume(input_filepath)
     except (OSError, ValueError) as error:
         return f"Error: could not load input array: {error}"
 
