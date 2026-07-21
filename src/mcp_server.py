@@ -107,16 +107,6 @@ def visualize_slice(input_filepath: str, output_filepath: str, slice_index: int,
 
 @mcp.tool()
 def skeletonize(input_filepath: str, output_filepath: str) -> str:
-    """
-    Creates a skeleton from a 3D segmentation mask.
-    
-    Args:
-        input_filepath: Path to the .npy file containing the 3D mask.
-        output_filepath: Path to save the extracted skeleton (.npy).
-        
-    Returns:
-        A status message indicating success and the save location, or an error message.
-    """
     if not os.path.isfile(input_filepath):
         return f"Error: input file not found at {input_filepath}"
     if os.path.splitext(input_filepath)[1].lower() != ".npy":
