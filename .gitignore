@@ -192,3 +192,7 @@ outputs/**/*.gif
 /fpde2013-*.pdf
 /s10439-*.pdf
 /2D_and_3D_Vascular_Structures_*.pdf
+
+# Editor/session cruft
+.Rhistory
+**/.Rhistory

@@ -1,0 +1,10 @@
+{
+  "n_struts": 18468,
+  "eligible": 13932,
+  "samples": 33,
+  "tube_radius_vox": 3,
+  "edt_healthy_median_vox": 2.2360680103302,
+  "edt_robust_sigma_vox": 0.7472559509038925,
+  "edt_missing_cutoff_vox": -0.00569984238147736,
+  "elapsed_seconds": 10.621520519256592
+}

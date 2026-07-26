@@ -1,0 +1,14 @@
+{
+  "projection": "maximum through +/-3 voxels in strut-local transverse direction",
+  "image_shape": [
+    33,
+    7
+  ],
+  "eligible": 13932,
+  "counts": {
+    "disconnected": 557,
+    "missing": 214,
+    "nominal": 12010,
+    "uncertain": 1151
+  }
+}
