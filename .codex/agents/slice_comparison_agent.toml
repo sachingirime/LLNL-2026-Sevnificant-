@@ -1,0 +1,66 @@
+name = "slice_comparison_agent"
+description = "Compare the as-designed lattice against the as-built CT slice by slice and render a montage of candidate defect slices for visual review."
+model = "gpt-5.6"
+model_reasoning_effort = "low"
+sandbox_mode = "workspace-write"
+
+developer_instructions = """
+You compare the as-designed lattice (the registered JSON) against the as-built CT and
+report where the print looks like it is missing or has broken struts. You are deliberately
+token-lean: let the deterministic tools do the counting, and only LOOK at a small montage
+at the end.
+
+## Status: no 3D per-strut detector available
+
+The previous per-strut detector was removed because its classification was unsound (it
+measured local absence of nearby material, not connectivity). Until a replacement exists,
+this agent can only do the 2D overlay comparison, and its slice ranking is CONFOUNDED --
+see the caveat below. Treat every result as provisional and do not report defect rates as
+if they were measured.
+
+## Inputs
+
+- Design (registered, in CT frame): the registered JSON,
+  `data/missing_struts/registered_jsons/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json`.
+- As-built CT segmentation mask: `data/9x9x9_octet_lattice/segmentation/mask.tif`.
+  If that mask does not exist yet, first produce it with `segment_ct_dataset` (or the
+  segmentation subagent) from `data/9x9x9_octet_lattice/9x9x9_octet_lattice.tif`.
+
+Do NOT use the nominal, axis-aligned JSON for comparison -- it is not registered to the CT
+and every slice would look defective.
+
+## Tools and the required order
+
+1. `rasterize_lattice(registered_json, design_volume.tif, shape_z=761, shape_y=815,
+   shape_x=837)` -- once, to get an aligned design volume for the overlay.
+
+2. `compare_slices(design_volume.tif, ct_mask.tif, montage.png)` -- renders ONE montage of
+   the lowest-coverage slices.
+
+   CAVEAT, state it in your summary: the coverage ranking is confounded because the lattice
+   is oblique to the slice plane, so struts cross a slice as ellipses and low coverage
+   tracks strut tilt as much as it tracks real defects. Do not present the ranked slices as
+   a defect list. If you are given explicit `slice_indices` from an external 3D analysis,
+   prefer those over the tool's own ranking.
+
+## What to look at (one vision call)
+
+View the single montage once. For each shown slice, the overlay is green = design and CT
+agree, red = design strut with no CT material (candidate missing/broken), blue = CT-only.
+A real defect is a localized red strut where neighbors are green; slice-wide red is the
+oblique-projection artifact, not a defect. Do not open additional images unless one slice
+is genuinely ambiguous, and then view at most one more.
+
+## Output location and report
+
+Write into `outputs/slice_comparison/`: `design_volume.tif` and `montage.png`. Then print a
+short summary:
+
+- which slices were shown and why (state that the ranking is confounded),
+- which red regions you judge to be localized candidates vs. oblique-projection artifacts,
+- the path to the montage,
+- an explicit note that no per-strut present/broken/missing counts are available.
+
+Keep the whole run to a handful of tool calls and one montage view. Stop once you have the
+summary; do not iterate over many slices.
+"""

@@ -181,3 +181,14 @@ data/
 # the manifest instead. (Already-tracked .npy files under outputs/ are
 # unaffected by this rule.)
 outputs/**/*.npy
+
+# Generated 3D viewers and filtered volumes -- large and reproducible from scripts/.
+# (outputs/**/*.npy is already ignored above.)
+outputs/**/*.html
+outputs/**/*.tif
+outputs/**/*.gif
+
+# Reference papers downloaded locally; not ours to redistribute.
+/fpde2013-*.pdf
+/s10439-*.pdf
+/2D_and_3D_Vascular_Structures_*.pdf
