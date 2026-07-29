@@ -1,7 +1,9 @@
 import base64
+import collections
 import io
 import json
 import os
+import sys
 
 import numpy as np
 import matplotlib
@@ -14,10 +16,14 @@ try:
     # Package import for tests and programmatic use.
     from .skeletonization import skeletonize_mask
     from . import lattice_iou
+    from . import node_planes_2d
+    from . import stl_ground_truth
 except ImportError:
     # Script import when FastMCP starts this file via ``python src/mcp_server.py``.
     from skeletonization import skeletonize_mask
     import lattice_iou
+    import node_planes_2d
+    import stl_ground_truth
 
 # Initialize the MCP server
 mcp = FastMCP("CT Segmentation")
@@ -1142,11 +1148,23 @@ def detect_missing_nodes(
 
         fill = |{sphere of radius_factor x r_strut} & mask| / |sphere|
 
+    EVERY node in the design JSON is tested, with no filtering -- go to the point the
+    design declares, look at the voxels there, report what is missing. Counts restricted
+    to interior (degree 12) junctions are reported underneath as a second number, not as
+    the headline, because filtering by degree answers a narrower question than "which
+    junctions in this design have nothing behind them" and can hide the larger count.
+
     A junction that printed reads ~1.0 and one that did not reads 0.0, with nothing in
     between, so the cut is READ OFF THE EMPTY GAP in the sorted distribution rather than
     chosen. The tool reports the gap width; a wide gap means the answer does not depend on
     where in it the cut falls, and the radius does not matter either -- anywhere from the
     design node radius to ~3x the strut radius gives the same nodes.
+
+    READ THE GEOMETRY OF THE HITS BEFORE QUOTING A RATE. If the flagged nodes all lie on
+    one flat plane, that is the design reaching past the printed part on that face, and it
+    is reported as such -- on the 0.5% specimen 181 of 183 hits are the single face
+    y = 759, so the whole-part rate is 5.34% or 0.08% depending entirely on how that face
+    is read. The tool states the geometry and does not decide for you.
 
     The reading is that clean because a node is present whole or absent whole. It is not a
     separately printed part: in the design a junction is a bare position with no radius and
@@ -1200,32 +1218,82 @@ def detect_missing_nodes(
     except (OSError, ValueError, KeyError) as error:
         return f"Error: could not measure the nodes: {error}"
 
+    # THE ANSWER IS THE UNFILTERED ONE: every node the JSON declares, tested where the
+    # design puts it. Filtering by degree first answers a narrower question than was asked
+    # and buries the biggest number in a footnote, which is how this tool used to read.
     interior = degree == 12
-    if not interior.any():
-        return "Error: no interior (degree 12) nodes found; is this an octet lattice?"
-    sv = np.sort(fill[interior])
+    sv = np.sort(fill)
     g = int(np.argmax(np.diff(sv)))
     cut = 0.5 * (sv[g] + sv[g + 1])
     gap = float(sv[g + 1] - sv[g])
-    flagged = interior & (fill <= cut)
+    flagged = fill <= cut
+    n_empty = int((fill < 0.01).sum())
 
     lines = [
-        f"{len(node_pos)} physical nodes from {len(pos)} junction entries, "
-        f"{int(interior.sum())} interior.",
+        f"{len(node_pos)} physical nodes from {len(pos)} junction entries "
+        f"({int(interior.sum())} interior, {int((~interior).sum())} surface).",
         f"  registration correction applied: {corrected}"
         + ("" if corrected else "   <-- NOT APPLIED, result is unreliable"),
         f"  sphere radius {radius_factor:.3f} r = {r_node:.2f} vox = "
         f"{r_node * geom['um_per_voxel']:.0f} um",
-        f"  fill: min {sv[0]:.3f}, p1 {np.percentile(sv, 1):.3f}, "
+        f"  fill over ALL nodes: min {sv[0]:.3f}, p1 {np.percentile(sv, 1):.3f}, "
         f"median {np.median(sv):.3f}",
         f"  largest gap {sv[g]:.3f} -> {sv[g + 1]:.3f} ({gap:.3f} wide); "
         f"cut read off it at {cut:.3f}",
         "",
+        f"MISSING NODES: {int(flagged.sum())} of {len(node_pos)} "
+        f"({100 * flagged.sum() / len(node_pos):.2f}%)"
+        + (f"   ({n_empty} of them exactly empty)" if n_empty != int(flagged.sum()) else ""),
     ]
     if gap < 0.2:
-        lines.append("WARNING: the gap is narrow, so this cut IS a choice and the count "
-                     "depends on it. Inspect the distribution before reporting.")
-    lines.append(f"missing-node candidates by sphere fill: {int(flagged.sum())}")
+        lines.append("  NOTE: the gap is only "
+                     f"{gap:.3f} wide, so this cut IS a choice. {n_empty} nodes are "
+                     "exactly empty; the rest of the count depends on where the cut falls.")
+
+    # Where they sit decides how the number should be read, so always say. A flat face of
+    # empties is the design reaching past the printed part; scattered ones are build
+    # failures. The tool reports the geometry and does not decide for the reader.
+    emp = flagged
+    if emp.sum() > 1:
+        pts = node_pos[emp]
+        names = ("z", "y", "x")
+        tol = 0.5 * geom["strut_length_vox"]
+        # COUNT how many sit on a plane rather than measuring the total spread: a single
+        # stray hit elsewhere sends the spread to the full part width and hides a face
+        # that is really there.
+        best = max(((int((np.abs(pts[:, a] - np.median(pts[:, a])) < tol).sum()), a)
+                    for a in range(3)), key=lambda t: t[0])
+        n_face, axis = best
+        if n_face > 0.5 * emp.sum():
+            rest = int(emp.sum()) - n_face
+            lines.append(
+                f"  {n_face} of the {int(emp.sum())} lie on the single plane "
+                f"{names[axis]} = {np.median(pts[:, axis]):.0f}"
+                + (f"; the other {rest} are scattered." if rest else " -- all of them."))
+            lines.append(
+                "  A whole flat face reads as the design reaching past the printed part "
+                "rather than as build failures, and the scattered ones read as build "
+                "failures. Decide which before quoting a rate -- here the two readings "
+                f"differ by {emp.sum() / max(rest, 1):.0f}x.")
+    lines.append(f"  of the flagged, {int((flagged & interior).sum())} are interior "
+                 f"(degree 12) and {int((flagged & ~interior).sum())} are surface.")
+
+    # Surface nodes still deserve their own note: they read empty for two very different
+    # reasons -- not printed, or the design extends past the part.
+    surface = ~interior
+    if surface.any() and interior.any():
+        lines += [
+            "",
+            "The same count restricted to interior (degree 12) nodes only: "
+            f"{int((flagged & interior).sum())} of {int(interior.sum())} "
+            f"({100 * (flagged & interior).sum() / interior.sum():.2f}%).",
+            "  Both are real answers to different questions. The headline counts every "
+            "junction the design declares. This one counts only junctions fully "
+            "surrounded by lattice, where an empty sphere cannot be a surface effect.",
+            "  Cross-check with detect_missing_nodes_2d, which is design-free -- it "
+            "proposes no site outside the printed part, so it will not see a face "
+            "mismatch at all.",
+        ]
 
     # The independent instrument: how many of the struts that should meet here actually
     # arrive. It comes from the strut labels, the fill above comes from the voxels.
@@ -1251,14 +1319,23 @@ def detect_missing_nodes(
         except (OSError, ValueError, KeyError):
             dead = None
 
-    for k in np.flatnonzero(flagged | (dead if dead is not None else flagged)):
+    listed = np.flatnonzero(flagged | (dead if dead is not None else flagged))
+    lines.append("")
+    # Interior first: those are the ones a reader acts on. A face mismatch produces
+    # hundreds of surface entries and would bury them.
+    listed = listed[np.argsort(~interior[listed], kind="stable")]
+    cap = 25
+    for k in listed[:cap]:
         p = node_pos[k]
         note = ""
-        if dead is not None:
+        if dead is not None and interior[k]:
             note = ("  confirmed by both" if flagged[k] and dead[k]
                     else "  ONE INSTRUMENT ONLY -- inspect before reporting")
         lines.append(f"  node {k}  z={p[0]:.0f} y={p[1]:.0f} x={p[2]:.0f}  "
-                     f"fill {fill[k]:.3f}{note}")
+                     f"deg {int(degree[k]):2d}  fill {fill[k]:.3f}{note}")
+    if len(listed) > cap:
+        lines.append(f"  ... and {len(listed) - cap} more (all listed in nodes.csv, "
+                     f"column `fill`)")
 
     lines.append("")
     if dead is None:
@@ -1266,13 +1343,604 @@ def detect_missing_nodes(
                      "detect_lattice_defects run to confirm each candidate against the "
                      "struts that should arrive. On its own this is one instrument.")
     else:
-        agree = int((flagged & dead).sum())
-        disagree = int((flagged ^ dead).sum())
-        lines.append(f"Degree cross-check: {int(dead.sum())} nodes with no strut "
-                     f"arriving.  agree with sphere fill: {agree}   disagree: {disagree}")
+        # Scoped to interior nodes: `dead` needs >=8 measurable struts arriving, which a
+        # surface node never has, so counting surface nodes as "disagreements" would
+        # report 182 conflicts that are really just the cross-check not applying there.
+        agree = int((flagged & dead & interior).sum())
+        disagree = int(((flagged ^ dead) & interior).sum())
+        lines.append(f"Degree cross-check (interior nodes only -- a surface node has too "
+                     f"few measurable struts for it to mean anything):")
+        lines.append(f"  {int(dead.sum())} nodes with no strut arriving.  "
+                     f"agree with sphere fill: {agree}   disagree: {disagree}")
         if disagree:
-            lines.append("A disagreement means the voxels and the strut labels tell "
+            lines.append("  A disagreement means the voxels and the strut labels tell "
                          "different stories. Inspect those nodes before reporting them.")
+        n_surf_flag = int((flagged & ~interior).sum())
+        if n_surf_flag:
+            lines.append(f"  The {n_surf_flag} flagged surface nodes are NOT cross-checked "
+                         f"by this instrument -- they rest on the sphere fill alone.")
+
+    lines += _malformed_node_section(results_directory,
+                                     inc_bad=(inc_b if dead is not None else None))
+    return "\n".join(lines)
+
+
+def _malformed_node_section(results_directory: str, show: int = 12, inc_bad=None) -> list:
+    """Rank junctions that printed but did not FORM, by how far out they stay solid.
+
+    Absence and malformation are different failures and the sphere fill above can only see
+    the first: its 257 um probe sits inside a 937 um junction, so anything short of total
+    absence reads 1.000. The size already measured by `measure_nodes` does not saturate --
+    `diameter_fill_um` is the largest ball about the junction that is still 90% material --
+    and its low tail is where a junction whose struts arrived but never fused shows up.
+
+    Ranked twice on purpose. Junction size falls with build height on this specimen
+    (r = -0.47), so the raw low tail is partly a list of tall nodes; the detrended ratio
+    says how small a junction is against others at ITS height. Both are printed because
+    the trend is a real property of the print and hiding it would be worse than the bias.
+    No threshold is applied -- the gaps are printed and the cut is read off them.
+
+    TWO confounds, not one, and the second is the one that invalidates a naive reading.
+    Size also falls with the number of defective struts arriving (r = -0.42 here, against
+    -0.53 for height) -- a junction with struts missing has less material near it whether
+    or not the junction itself failed. So a small junction is only evidence of a *junction*
+    failure if it is small against nodes with the SAME number of dead struts. That
+    comparison is printed; a candidate that is merely typical for its strut damage is a
+    consequence of the strut defects and must not be reported as a separate finding.
+    """
+    path = os.path.join(results_directory or "", "nodes.csv")
+    if not results_directory or not os.path.isfile(path):
+        return ["", "Malformed-node ranking NOT run: pass results_directory from a "
+                    "measure_lattice_iou / detect_lattice_defects run (it needs nodes.csv)."]
+    try:
+        d = np.genfromtxt(path, delimiter=",", names=True)
+        ok = (d["is_interior"] == 1) & (d["embedded"] == 0)
+        dia, z, ids = d["diameter_fill_um"], d["z"], d["node_id"]
+    except (OSError, ValueError, KeyError) as error:
+        return ["", f"Malformed-node ranking unavailable: {error}"]
+    if ok.sum() < 50:
+        return ["", "Malformed-node ranking skipped: too few measurable interior nodes."]
+
+    absent = ok & (dia <= 0)
+    ratio, expected = lattice_iou.detrend_by_height(dia, z, exclude=absent)
+    live = ok & ~absent
+    v = np.sort(dia[live])
+    corr = float(np.corrcoef(z[live], dia[live])[0, 1])
+
+    out = [
+        "",
+        "MALFORMED junctions -- printed but not formed. A different failure from absence, "
+        "and invisible to the sphere fill above, which saturates.",
+        f"  junction size (diameter at 90% ball fill) over {int(live.sum())} measurable "
+        f"interior nodes: median {np.median(v):.0f} um, p1 {np.percentile(v, 1):.0f}, "
+        f"p5 {np.percentile(v, 5):.0f} um",
+        f"  size vs build height: r = {corr:+.3f}"
+        + ("  -- strong, so the raw ranking is partly a list of tall nodes; rank on the "
+           "detrended ratio" if abs(corr) > 0.2 else "  -- weak, raw and detrended agree"),
+        "",
+        "  rank  node    z     diameter_um   gap_to_next   ratio_to_height   bad_struts",
+    ]
+    nb = None
+    if inc_bad is not None and len(inc_bad) >= len(dia):
+        nb = np.asarray(inc_bad)[:len(dia)]
+    order = np.flatnonzero(live)[np.argsort(dia[live])]
+    for rank, k in enumerate(order[:show]):
+        gap = (dia[order[rank + 1]] - dia[k]) if rank + 1 < len(order) else float("nan")
+        out.append(f"  {rank:4d}  {int(ids[k]):5d}  {z[k]:5.0f}   {dia[k]:9.1f}   "
+                   f"{gap:9.1f}      {ratio[k]:11.3f}   "
+                   f"{(int(nb[k]) if nb is not None else -1):10d}")
+
+    gaps = np.diff(v[:60])
+    g = int(np.argmax(gaps))
+    out += [
+        "",
+        f"  largest gap in the low tail: {v[g]:.1f} -> {v[g + 1]:.1f} um "
+        f"({gaps[g]:.1f} um wide), separating {g + 1} node(s) below it.",
+    ]
+    if gaps[g] < 30:
+        out.append("  That gap is narrow, so the low tail is a continuum and any cut here "
+                   "IS a choice. Report the ranking, not a count.")
+    r_order = np.flatnonzero(live)[np.argsort(ratio[live])]
+    out.append(f"  detrended ranking agrees on the top "
+               f"{sum(1 for a, b in zip(order[:5], r_order[:5]) if a == b)} of 5.")
+
+    if nb is not None:
+        corr_b = float(np.corrcoef(nb[live], dia[live])[0, 1])
+        out += ["",
+                f"  SECOND CONFOUND: size vs defective incident struts, r = {corr_b:+.3f}. "
+                f"A junction with struts missing has less material near it whether or not "
+                f"the junction failed, so compare only within a strut-damage class:",
+                "     bad struts   nodes   median size um   the top candidate"]
+        top = int(order[0])
+        for kb in range(0, int(nb[live].max()) + 1):
+            peer = live & (nb == kb)
+            if not peer.any():
+                continue
+            here = "  <-- it is here" if int(nb[top]) == kb else ""
+            out.append(f"     {kb:10d}  {int(peer.sum()):6d}   {np.median(dia[peer]):14.0f}"
+                       f"{here}")
+        peer = live & (nb == nb[top])
+        pct = 100.0 * float((dia[peer] < dia[top]).mean())
+        out.append(f"  node {int(ids[top])} sits at the {pct:.0f}th percentile of the "
+                   f"{int(peer.sum())} nodes with {int(nb[top])} defective struts "
+                   f"(their median {np.median(dia[peer]):.0f} um vs its {dia[top]:.0f} um).")
+        if pct > 10.0:
+            out.append("  It is NOT unusual for its strut damage -- treat it as a "
+                       "consequence of those struts, not a separate junction failure.")
+        else:
+            out.append("  It is the smallest in its own class, so its size is not "
+                       "explained by its dead struts alone.")
+    if int(absent.sum()):
+        out.append(f"  ({int(absent.sum())} absent nodes excluded from this ranking and "
+                   f"from the height fit -- they are reported above.)")
+    return out
+
+
+@mcp.tool()
+def detect_missing_nodes_2d(
+    mask_filepath: str,
+    r_thr_vox: float = 0.0,
+    match_frac: float = 0.25,
+    plate_frac: float = 0.20,
+) -> str:
+    """
+    Finds junctions that were never printed WITHOUT using the design or the registration.
+
+    Every other node tool here looks a design junction up in the CT, so its answer is only
+    as good as the transform and it can never see a node the design does not mention. This
+    one opens nothing but the mask. It locates the node planes from the periodicity of the
+    image itself, finds the nodes as locally-fat regions, works out the lattice they sit on
+    from the nodes, and asks which sites of that lattice have nothing at them. Agreement
+    with `detect_missing_nodes` therefore means something, because the two share no inputs
+    beyond the voxels.
+
+    Why per-slice works for nodes when it failed for struts on this data: an octet strut
+    runs at 45 degrees so no plane contains one, but nodes occupy discrete z planes ~39 vox
+    apart and the specimen tilt is only ~3 vox across its full width, so a node plane is
+    essentially one slice.
+
+    Read the output in this order:
+
+      * `pitch` and `basis angle` are the check that the lattice fit is real. They are
+        recovered from the blobs alone; for an octet they must land on cell/sqrt(2) and
+        90 degrees. If they do not, nothing below is trustworthy.
+      * `interior sites empty` is the result. Sites are the integer lattice points inside
+        the CONVEX HULL of the observed nodes, so the detector interpolates and never
+        extrapolates -- it cannot invent nodes past the edge of the part. The price is that
+        it is blind to a whole absent outer row, which is exactly the case only a design
+        comparison can catch, so run `detect_missing_nodes` as well and compare.
+      * The threshold sweep. An empty site means "no node-sized object here", which is
+        absence OR severe undersizing; the sweep shows over what range of `r_thr` the count
+        is stable. Separate the two by measuring each candidate (see
+        `scripts/node_planes_2d.py`, which reports mask material fraction and inscribed
+        radius per candidate and renders the annotated slice).
+
+    Build-plate slices are excluded by foreground fraction, and any plane whose lattice fit
+    does not converge is rejected and named rather than silently averaged in.
+
+    Args:
+        mask_filepath: Binary segmentation .tif/.npy in (z, y, x).
+        r_thr_vox: Inscribed radius that defines a node blob. 0 (default) reads it off the
+            valley of the bimodal EDT histogram instead of asserting one.
+        match_frac: A site counts as answered by a node within this fraction of the pitch.
+        plate_frac: Foreground fraction above which a slice is inside a build plate.
+
+    Returns:
+        Per-plane counts, the recovered lattice, the empty interior sites with coordinates,
+        and the threshold sweep, or an error message.
+    """
+    if not os.path.isfile(mask_filepath):
+        return f"Error: mask file not found at {mask_filepath}"
+    if not 0.0 < match_frac < 0.5:
+        return f"Error: match_frac must be in (0, 0.5) (got {match_frac})"
+
+    try:
+        mask = _load_volume(mask_filepath) > 0
+        result = node_planes_2d.run(mask, r_thr=(r_thr_vox or None),
+                                    plate_frac=plate_frac, match_frac=match_frac,
+                                    log=lambda *_: None)
+    except (OSError, ValueError, KeyError, RuntimeError) as error:
+        return f"Error: could not run the 2D node-plane detector: {error}"
+
+    planes = result["planes"]
+    if not planes:
+        return ("Error: no usable node planes. Every candidate plane failed the lattice "
+                "fit; check that this is a lattice mask and not a solid part.")
+
+    pitch = float(np.median([p["pitch_vox"] for p in planes]))
+    angle = float(np.median([p["basis_angle_deg"] for p in planes]))
+    lines = [
+        f"{len(planes)} usable node planes, z {planes[0]['z']}..{planes[-1]['z']} "
+        f"(spacing median {np.median(np.diff([p['z'] for p in planes])):.1f} vox)",
+        f"  node blob radius threshold {result['r_thr']:.2f} vox "
+        + ("(read off the EDT histogram valley)" if not r_thr_vox else "(given)"),
+        f"  lattice recovered from the nodes alone: pitch {pitch:.2f} vox at "
+        f"{angle:.1f} deg",
+    ]
+    if not 85.0 <= angle <= 95.0:
+        lines.append("  WARNING: the basis is not square. For an octet it should be 90 "
+                     "deg; the fit has not found the lattice and the counts below mean "
+                     "nothing.")
+    for z, why in result["rejected"]:
+        lines.append(f"  plane z={z} rejected: {why}")
+
+    lines.append("")
+    lines.append("   z    blobs  sites  interior  empty(interior)  empty(edge ring)")
+    n_int = n_miss = n_edge = 0
+    candidates = []
+    for res in planes:
+        interior = ~res["edge"]
+        miss = interior & ~res["found"]
+        n_int += int(interior.sum())
+        n_miss += int(miss.sum())
+        n_edge += int((res["edge"] & ~res["found"]).sum())
+        lines.append(f"  {res['z']:4d}  {len(res['centroids']):5d}  "
+                     f"{len(res['sites_xy']):5d}  {int(interior.sum()):8d}  "
+                     f"{int(miss.sum()):15d}  {int((res['edge'] & ~res['found']).sum()):16d}")
+        for s in np.flatnonzero(miss):
+            candidates.append((res["z"], res["sites_xy"][s], res["dist"][s]))
+
+    lines += [
+        "",
+        f"interior sites tested {n_int}, EMPTY {n_miss} "
+        f"({100 * n_miss / max(n_int, 1):.3f}%)",
+        f"edge-ring sites empty {n_edge} -- an extent question, not a defect claim; the "
+        f"hull cannot tell a missing outer node from a part that ends there.",
+    ]
+    for z, xy, d in candidates:
+        lines.append(f"  empty interior site  z={z} y={xy[0]:.0f} x={xy[1]:.0f}  "
+                     f"(nearest node blob {d:.1f} vox away)")
+    if candidates:
+        lines.append("  Each is 'no node-sized object here' -- absence or severe "
+                     "undersizing. Measure them before reporting which.")
+
+    sweep = node_planes_2d.threshold_sweep(
+        mask, [p["z"] for p in planes], [3.5, 4.0, 4.5, 5.0, 5.5, 6.0], match_frac)
+    lines.append("")
+    lines.append("threshold sweep -- how much of this is the threshold:")
+    for r, ni, nm in sweep:
+        mark = "  <-- used" if abs(r - result["r_thr"]) < 0.3 else ""
+        lines.append(f"  r_thr {r:4.1f}   interior sites {ni:6d}   empty {nm:4d}{mark}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def visualize_strut_classes(
+    mask_filepath: str,
+    design_filepath: str,
+    results_directory: str,
+    output_filepath: str,
+    correction_filepath: str = "",
+    strut_ids: str = "",
+    classes: str = "",
+    per_class: int = 1,
+    n_sections: int = 8,
+    seed: int = 0,
+) -> str:
+    """
+    Renders the VOXELS behind each strut's classification, one strut per row.
+
+    Every strut number this project reports -- missing, broken, thin, thick, necked,
+    nominal -- comes from a measurement you cannot check by reading a CSV. This draws the
+    evidence: for each chosen strut, a lateral slice through its own axis on the left and
+    a run of cross-sections cut PERPENDICULAR to that axis on the right, with the nominal
+    350 um circle on every one.
+
+    The two views fail in opposite directions, which is why both are drawn. The lateral
+    view shows where material starts and stops -- a gap is a white column and needs no
+    statistic -- but it is one plane through the axis, so it misses anything off that
+    plane. The cross-sections see all the way round but are independent planes, so they
+    cannot show continuity. Side by side each covers the other's blind spot.
+
+    Use it two ways:
+      * survey -- leave `strut_ids` empty to draw `per_class` random struts from each
+        class. This is the figure to look at before trusting any class count.
+      * inspection -- pass explicit `strut_ids` to interrogate particular struts, e.g.
+        ones a reviewer questions or the borderline cases at a threshold.
+
+    Reads the measurements a previous `detect_lattice_defects` run cached, so it is fast
+    (seconds) and always shows exactly the struts those numbers describe. It does not
+    re-measure or re-classify anything.
+
+    Args:
+        mask_filepath: Binary segmentation .tif/.npy in (z, y, x).
+        design_filepath: Registered lattice .json.
+        results_directory: Directory from a `detect_lattice_defects` run. Must contain
+            summary.json, struts.csv, strut_classes.csv and sections.npz.
+        output_filepath: Where to write the .png.
+        correction_filepath: Registration correction.json. Strongly recommended -- the
+            sections are cut about the design axis, so an uncorrected transform draws the
+            window in the wrong place and every strut looks off-centre.
+        strut_ids: Comma-separated strut ids to draw, in order. Overrides `classes` and
+            `per_class`.
+        classes: Comma-separated class names to include in the survey (default: all).
+        per_class: Struts drawn per class in the survey view.
+        n_sections: Cross-sections drawn per strut.
+
+    Returns:
+        What was drawn, with each strut's measurements, or an error message.
+    """
+    for path, what in ((mask_filepath, "mask"), (design_filepath, "design JSON")):
+        if not os.path.isfile(path):
+            return f"Error: {what} file not found at {path}"
+    if correction_filepath and not os.path.isfile(correction_filepath):
+        return f"Error: correction file not found at {correction_filepath}"
+    needed = ("summary.json", "struts.csv", "strut_classes.csv", "sections.npz")
+    missing = [f for f in needed
+               if not os.path.isfile(os.path.join(results_directory or "", f))]
+    if missing:
+        return (f"Error: {results_directory} is missing {', '.join(missing)}. Run "
+                f"detect_lattice_defects into that directory first -- this tool draws "
+                f"what that run measured, it does not measure anything itself.")
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        from scripts.classify_strut_defects import (CLASS_COLORS, ORDER, measurable,
+                                                    plot_section_gallery)
+    except ImportError as error:
+        return f"Error: could not import the gallery renderer: {error}"
+
+    try:
+        root = results_directory
+        summary = json.load(open(os.path.join(root, "summary.json")))
+        um = summary["geometry"]["um_per_voxel"]
+        r_strut = summary["geometry"]["nominal_strut_radius_vox"]
+        nominal_um = summary["geometry"]["nominal_strut_diameter_um"]
+
+        pos, pairs, _, corrected = lattice_iou.load_design(
+            design_filepath, correction_filepath or None)
+        mask = _load_volume(mask_filepath) > 0
+
+        z = np.load(os.path.join(root, "sections.npz"), allow_pickle=False)
+        sec = {k[4:]: z[k] for k in z.files if k.startswith("sec_")}
+        n_total = int(z["prof_r_eq"].shape[1])
+        cls = np.genfromtxt(os.path.join(root, "strut_classes.csv"), delimiter=",",
+                            names=True, dtype=None, encoding=None)
+        lab = cls["label"]
+        d = np.genfromtxt(os.path.join(root, "struts.csv"), delimiter=",", names=True)
+        n = min(len(sec["r_eq_med"]), len(lab))
+        d = {k: d[k][:n] for k in d.dtype.names}
+        sec = {k: v[:n] for k, v in sec.items()}
+        lab = lab[:n]
+        ok = measurable(d, sec)
+
+        extra = None
+        cpath = os.path.join(root, "connectivity.npz")
+        if os.path.isfile(cpath):
+            extra = dict(np.load(cpath, allow_pickle=False))
+    except (OSError, ValueError, KeyError) as error:
+        return f"Error: could not load the cached measurements: {error}"
+
+    picks, title = None, None
+    if strut_ids.strip():
+        try:
+            ids = [int(s) for s in strut_ids.replace(" ", "").split(",") if s]
+        except ValueError:
+            return f"Error: could not parse strut_ids {strut_ids!r} as integers"
+        bad = [i for i in ids if not 0 <= i < n]
+        if bad:
+            return f"Error: strut id(s) {bad} out of range 0..{n - 1}"
+        picks = [(str(lab[i]), i) for i in ids]
+        title = (f"{len(ids)} requested struts: lateral view through the axis (left) and "
+                 f"cross-sections along it (right)   red = nominal {nominal_um:.0f} um")
+    elif classes.strip():
+        want = {c.strip() for c in classes.split(",") if c.strip()}
+        unknown = want - set(ORDER)
+        if unknown:
+            return (f"Error: unknown class(es) {sorted(unknown)}. "
+                    f"Known classes: {', '.join(ORDER)}")
+        rng = np.random.default_rng(seed)
+        picks = []
+        for name in ORDER:
+            if name not in want:
+                continue
+            idx = np.flatnonzero(ok & (lab == name))
+            if idx.size:
+                take = rng.choice(idx, size=min(per_class, idx.size), replace=False)
+                picks += [(name, int(k)) for k in np.atleast_1d(take)]
+        if not picks:
+            return (f"Error: no measurable strut in {sorted(want)}. Counts among "
+                    f"measurable struts: "
+                    + ", ".join(f"{c}={int((ok & (lab == c)).sum())}" for c in ORDER))
+
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(output_filepath)), exist_ok=True)
+        plot_section_gallery(mask, pos, pairs, r_strut, lab, sec, ok, output_filepath,
+                             um, n_total, n_show=n_sections, seed=seed,
+                             nominal_um=nominal_um, extra=extra, picks=picks,
+                             per_class=per_class, title=title)
+    except (OSError, ValueError, KeyError, IndexError) as error:
+        return f"Error: could not render the gallery: {error}"
+
+    lines = [f"Wrote {output_filepath}",
+             f"  registration correction applied: {corrected}"
+             + ("" if corrected else "   <-- NOT APPLIED, the section windows are cut "
+                                     "about the design axis and will be off-centre"),
+             f"  {n_sections} cross-sections per strut, drawn from the {n_total} the "
+             f"cached run measured; nominal {nominal_um:.0f} um circle in red",
+             ""]
+    if picks is None:
+        lines.append(f"Survey view: {per_class} random strut(s) per class, of")
+        for c in ORDER:
+            lines.append(f"  {c:8s} {int((ok & (lab == c)).sum()):6d} measurable struts")
+        lines.append("Pass strut_ids to draw particular struts instead.")
+    else:
+        lines.append("Struts drawn:")
+        for name, sid in picks:
+            lines.append(
+                f"  #{sid:<6d} {name:8s} median {sec['r_eq_med'][sid] * 2 * um:4.0f} um  "
+                f"min {sec['r_eq_min'][sid] * 2 * um:4.0f} um  "
+                f"empty {int(sec['empty_sections'][sid])}/{n_total}"
+                + ("" if extra is None else
+                   ("  no node-to-node path" if not extra["reachable"][sid]
+                    else f"  detour {extra['detour'][sid]:.3f}x"))
+                + ("" if ok[sid] else "   <-- NOT MEASURABLE (boundary, plate-embedded "
+                                      "or window-touching); its class is not trustworthy"))
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def validate_against_stl(
+    nominal_design_filepath: str,
+    stl_filepath: str,
+    results_directory: str,
+    orientation: str = "",
+    absent_tol_mm: float = 0.7,
+) -> str:
+    """
+    Scores the detected missing struts against which struts the CAD actually removed.
+
+    This is the only check here that is not another measurement of the same scan. Three
+    instruments agreeing on 0.5% would look identical whether or not those are the right
+    struts; `0.5.stl` and `1.stl` are the design with struts deliberately deleted, so the
+    list of which ones is a ground truth no reading of the CT can talk itself into.
+
+    A strut is designed-out if no triangle lies within `absent_tol_mm` of its MIDSPAN.
+    Sampling near the ends finds the neighbouring junctions, which are still present, so a
+    removed strut would look supported.
+
+    PASS THE NOMINAL DESIGN JSON, NOT THE REGISTERED ONE. The STL lives in the design's
+    own frame (mm, centred on the origin), not in CT voxels. The registered JSON is in CT
+    coordinates and will align with nothing here.
+
+    THE ORIENTATION IS THE SUBTLE PART. Scale and centring come exactly off the bounding
+    boxes, leaving one of the cube's 48 signed axis permutations -- and that CANNOT be
+    fixed by matching the complete `0.stl`, which is invariant under all 48. This tool
+    therefore resolves it against the DEFECT stl, using the detected missing struts as the
+    reference pattern, and reports the margin over the runner-up so you can judge the
+    identification instead of trusting it. It also runs a check that owes nothing to the
+    detector: the winning orientation must put the STL's build-plate axis on the design's
+    build axis. Treat the score as provisional if either the margin is small or that check
+    fails.
+
+    Because the orientation is chosen to agree with the detector, precision and recall are
+    not a fully blind test -- but the COUNT of designed-out struts is independent of the
+    detector entirely, and comparing it against the specimen's nominal percentage is.
+
+    Args:
+        nominal_design_filepath: The unregistered octet_truss_9x9x9.json (all struts).
+        stl_filepath: A defect STL, e.g. data/missing_struts/stls/0.5.stl. Passing the
+            complete 0.stl is rejected -- it carries no orientation information.
+        results_directory: A detect_lattice_defects run (needs strut_classes.csv,
+            struts.csv).
+        orientation: Optional "perm|signs" such as "2,0,1|-1,-1,-1" to skip the search
+            and use a known alignment.
+        absent_tol_mm: Distance from the midspan beyond which a strut counts as absent.
+
+    Returns:
+        The designed-out count with its percentage, the orientation and its margin, and
+        precision / recall / F1 per predicted class, or an error message.
+    """
+    for path, what in ((nominal_design_filepath, "design JSON"), (stl_filepath, "STL")):
+        if not os.path.isfile(path):
+            return f"Error: {what} not found at {path}"
+    needed = ("strut_classes.csv", "struts.csv")
+    absent_files = [f for f in needed
+                    if not os.path.isfile(os.path.join(results_directory or "", f))]
+    if absent_files:
+        return (f"Error: {results_directory} is missing {', '.join(absent_files)}. Run "
+                f"detect_lattice_defects into that directory first.")
+
+    try:
+        pos, pairs, _, corrected = lattice_iou.load_design(nominal_design_filepath, None)
+        if corrected:
+            return "Error: do not pass a registration correction here; the STL is in the design frame."
+        extent = float(np.ptp(pos))
+        if not 10.0 < extent < 40.0:
+            return (f"Error: this design spans {extent:.1f} units, which looks like CT "
+                    f"voxels rather than design units. Pass the NOMINAL "
+                    f"octet_truss_9x9x9.json, not the registered one.")
+        centroids, n_tri = stl_ground_truth.read_stl_centroids(stl_filepath)
+        scale, span = stl_ground_truth.design_to_stl_scale(centroids)
+
+        cls = np.genfromtxt(os.path.join(results_directory, "strut_classes.csv"),
+                            delimiter=",", names=True, dtype=None, encoding=None)
+        st = np.genfromtxt(os.path.join(results_directory, "struts.csv"),
+                           delimiter=",", names=True)
+        lab = cls["label"]
+        n = len(lab)
+        usable = np.zeros(len(pairs), bool)
+        usable[:n] = (st["is_boundary"][:n] == 0) & (st["embedded"][:n] == 0)
+        detected = np.zeros(len(pairs), bool)
+        detected[:n] = (lab == "missing") & usable[:n]
+    except (OSError, ValueError, KeyError) as error:
+        return f"Error: could not load the inputs: {error}"
+
+    lines = [f"{os.path.basename(stl_filepath)}: {n_tri} triangles, "
+             f"bbox span {np.round(span, 2).tolist()} mm",
+             f"  {scale:.4f} mm per design unit (lattice axes / {int(18)} units)"]
+
+    if orientation.strip():
+        try:
+            p_txt, s_txt = orientation.split("|")
+            perm = tuple(int(v) for v in p_txt.split(","))
+            signs = tuple(int(v) for v in s_txt.split(","))
+            if sorted(perm) != [0, 1, 2] or set(signs) - {1, -1}:
+                raise ValueError
+        except ValueError:
+            return (f"Error: could not parse orientation {orientation!r}; expected "
+                    f'"2,0,1|-1,-1,-1"')
+        ranked = None
+    else:
+        if not detected.any():
+            return ("Error: no struts are labelled missing, so there is no pattern to "
+                    "align the STL against. The orientation cannot be found from a "
+                    "complete lattice -- it is invariant under all 48 symmetries.")
+        perm, signs, ranked = stl_ground_truth.find_orientation(
+            centroids, pos, pairs, detected, scale, absent_tol_mm)
+
+    worst, truth = stl_ground_truth.strut_support(
+        centroids, pos, pairs, perm, signs, scale, absent_tol_mm)
+
+    if not truth.any():
+        return (f"{os.path.basename(stl_filepath)} has every strut present -- no strut's "
+                f"midspan is further than {absent_tol_mm} mm from the mesh (worst "
+                f"{worst.max():.3f} mm).\n"
+                "There is nothing to score against, and a complete lattice cannot fix "
+                "the orientation either: it is invariant under all 48 cube symmetries. "
+                "Pass a defect STL (0.5.stl, 1.stl). Use 0.stl only as the reference "
+                "that shows what full support looks like.")
+
+    if ranked is not None:
+        best, second = ranked[0][0], ranked[1][0]
+        chance = detected.sum() * max(int(truth.sum()), 1) / max(len(pairs), 1)
+        lines += [
+            f"  orientation perm {tuple(perm)} signs {tuple(signs)}: matches "
+            f"{best} of the {int(detected.sum())} detected; runner-up {second}, "
+            f"chance {chance:.1f}",
+        ]
+        if best < 3 * max(second, 1):
+            lines.append("  WARNING: the margin over the runner-up is small, so the "
+                         "alignment is NOT established. Everything below is unreliable.")
+    else:
+        lines.append(f"  orientation perm {tuple(perm)} signs {tuple(signs)} (given)")
+
+    axis_name, ok_axis = stl_ground_truth.plate_axis_check(span, perm, signs)
+    lines.append(f"  independent check: the STL's plate axis maps to design {axis_name}"
+                 + ("  <-- the build axis, as it must" if ok_axis else
+                    "  <-- NOT the build axis; the alignment is probably wrong"))
+
+    lines += ["",
+              f"DESIGNED OUT: {int(truth.sum())} of {len(pairs)} struts "
+              f"({100 * truth.mean():.3f}%)   "
+              f"[{int((truth & usable).sum())} measurable, "
+              f"{int((truth & ~usable).sum())} boundary/plate-excluded]",
+              "  This count owes nothing to the detector -- compare it against the "
+              "specimen's nominal percentage as a check on the whole chain.",
+              ""]
+
+    lines.append("  class      predicted    TP    FP    FN   precision  recall     F1")
+    for name in ("missing", "broken", "thin", "thick"):
+        pred = np.zeros(len(pairs), bool)
+        pred[:n] = (lab == name)
+        s = stl_ground_truth.score(pred, truth, usable)
+        lines.append(f"  {name:9s} {s['n_pred']:9d} {s['tp']:5d} {s['fp']:5d} "
+                     f"{s['fn']:5d}     {s['precision']:.3f}   {s['recall']:.3f}  "
+                     f"{s['f1']:.3f}")
+
+    got = collections.Counter(lab[(truth[:n]) & usable[:n]].tolist())
+    lines += ["", "  what the designed-out struts were actually labelled: "
+                  + ", ".join(f"{k}={v}" for k, v in got.most_common())]
     return "\n".join(lines)
 
 

@@ -43,8 +43,8 @@ import tifffile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.lattice_iou import (_BLUE, _GRID, _INK, _INK2, _ORANGE, _RED, _SURFACE,
-                             _style, dedupe_junctions, lattice_geometry, load_design,
-                             measure_node_sphere_fill)
+                             _style, dedupe_junctions, detrend_by_height,
+                             lattice_geometry, load_design, measure_node_sphere_fill)
 
 DEF_JSON = ("data/missing_struts/registered_jsons/"
             "210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json")
@@ -165,8 +165,40 @@ def main():
         print(f"  {int(k):6d} {int(degree[k]):4d} {int(inc_usable[k]):7d} "
               f"{int(inc_bad[k]):4d} {int(arrive[k]):7d}  {fill[k]:6.3f} {dia:12.0f}")
 
+    # --------------------------------------------------------------- malformed nodes
+    # Absence and malformation are different failures. Sphere fill only sees the first --
+    # its 257 um probe sits inside a 937 um junction and saturates -- so a junction whose
+    # struts arrived but never fused reads 1.000 there. Size does not saturate.
+    dia = np.zeros(n_nodes)
+    for k in range(n_nodes):
+        r = lut.get(int(k))
+        dia[k] = nd["diameter_fill_um"][r] if r is not None else np.nan
+    live = solid & np.isfinite(dia) & (dia > 0)
+    # Junction size falls with build height on this specimen, so the raw low tail is partly
+    # a list of tall nodes. Rank on the ratio to what each node's height predicts, and print
+    # both, because the trend is a real property of the print and not an error to hide.
+    ratio, expect = detrend_by_height(dia, node_pos[:, 0], exclude=~live)
+    corr = float(np.corrcoef(node_pos[live, 0], dia[live])[0, 1])
+    corr_r = float(np.corrcoef(node_pos[live, 0], ratio[live])[0, 1])
+    print(f"\nmalformed junctions -- printed but not formed (size does not saturate)")
+    print(f"  diameter at 90% ball fill: median {np.median(dia[live]):.0f} um, "
+          f"p1 {np.percentile(dia[live], 1):.0f}, p5 {np.percentile(dia[live], 5):.0f}")
+    print(f"  vs build height: r = {corr:+.3f}  ->  after detrending {corr_r:+.3f}")
+    order = np.flatnonzero(live)[np.argsort(dia[live])]
+    sv_d = np.sort(dia[live])
+    gp = int(np.argmax(np.diff(sv_d[:60])))
+    print(f"  largest gap in the low tail: {sv_d[gp]:.1f} -> {sv_d[gp + 1]:.1f} um "
+          f"({sv_d[gp + 1] - sv_d[gp]:.1f} wide), {gp + 1} node(s) below it")
+    print(f"  {'rank':>4s} {'node':>6s} {'z':>5s} {'dia um':>8s} {'ratio':>6s} "
+          f"{'bad':>4s} {'fill':>6s}")
+    for rank, k in enumerate(order[:12]):
+        print(f"  {rank:4d} {int(k):6d} {node_pos[k][0]:5.0f} {dia[k]:8.1f} "
+              f"{ratio[k]:6.3f} {int(inc_bad[k]):4d} {fill[k]:6.3f}")
+    malformed = order[0] if len(order) else None
+
     hdr = ["node_id", "z", "y", "x", "degree", "incident_usable", "incident_bad",
-           "arriving", "arriving_frac", "sphere_fill", "missing_candidate"]
+           "arriving", "arriving_frac", "sphere_fill", "missing_candidate",
+           "diameter_fill_um", "size_ratio_to_height"]
     with open(root / "node_health.csv", "w") as fh:
         fh.write(",".join(hdr) + "\n")
         for k in range(n_nodes):
@@ -174,26 +206,71 @@ def main():
             fh.write(f"{k},{node_pos[k][0]:.3f},{node_pos[k][1]:.3f},{node_pos[k][2]:.3f},"
                      f"{int(degree[k])},{int(inc_usable[k])},{int(inc_bad[k])},"
                      f"{int(arrive[k])},{frac:.4f},{fill[k]:.4f},"
-                     f"{int(empty[k] or dead[k])}\n")
+                     f"{int(empty[k] or dead[k])},{dia[k]:.1f},{ratio[k]:.4f}\n")
     print(f"\nwrote {root / 'node_health.csv'}")
 
+    # The headline is the UNFILTERED count -- every node the design declares, tested where
+    # it declares it. The interior-only number is a second answer to a narrower question,
+    # and on this specimen the two differ by 100x, so the figure has to show both and show
+    # WHERE the hits are, because that is what decides which one to quote.
+    sa = np.sort(fill)
+    ga = int(np.argmax(np.diff(sa)))
+    cut_all = 0.5 * (sa[ga] + sa[ga + 1])
+    flag_all = fill <= cut_all
+    print(f"\nunfiltered: {int(flag_all.sum())} of {n_nodes} nodes flagged "
+          f"({100 * flag_all.sum() / n_nodes:.2f}%), cut {cut_all:.3f} off a "
+          f"{sa[ga + 1] - sa[ga]:.3f}-wide gap")
+
     plot(root / "node_health.png", fill, solid, inc_bad, obs, tot, pbad, mean_k, cut,
-         nd, lut)
+         nd, lut, dia, ratio, live, node_pos[:, 0],
+         flag_all=flag_all, interior=interior, pos=node_pos, cut_all=cut_all)
     print(f"wrote {root / 'node_health.png'}")
 
+    # A representative of the flagged surface group, if they form a flat face. The whole
+    # extent-vs-defect call rests on what those voxels look like, so put one in the figure
+    # rather than asking the reader to trust the word "extent". Pick the one nearest the
+    # middle of the face, so it is not also a plate or corner effect.
+    face_pick = None
+    fs = np.flatnonzero(flag_all & ~interior)
+    if fs.size:
+        pts = node_pos[fs]
+        tol = 0.5 * geom["strut_length_vox"]
+        for axis in range(3):
+            # Count how many sit on the plane rather than measuring the full spread: a
+            # single stray node elsewhere sends ptp to 709 vox and hides a real face.
+            on = np.abs(pts[:, axis] - np.median(pts[:, axis])) < tol
+            if on.mean() < 0.9:
+                continue
+            other = [k for k in range(3) if k != axis]
+            mid = np.median(pts[on][:, other], axis=0)
+            cand = fs[on]
+            face_pick = int(cand[np.argmin(np.abs(pts[on][:, other] - mid).sum(1))])
+            print(f"  face: {int(on.sum())} of {len(fs)} flagged surface nodes lie on "
+                  f"{'zyx'[axis]} = {np.median(pts[:, axis]):.0f}; gallery uses node "
+                  f"{face_pick} (z={node_pos[face_pick][0]:.0f} "
+                  f"y={node_pos[face_pick][1]:.0f} x={node_pos[face_pick][2]:.0f})")
+            break
+
     plot_node_gallery(root / "node_gallery.png", mask, node_pos, r_node, fill, solid,
-                      inc_bad, empty | dead, um)
+                      inc_bad, empty | dead, um, malformed=malformed, dia=dia,
+                      face_pick=face_pick, degree=degree)
     print(f"wrote {root / 'node_gallery.png'}")
 
 
 def plot_node_gallery(out_path, mask, node_pos, r_node, fill, solid, inc_bad, flagged,
-                      um, half=14):
+                      um, malformed=None, dia=None, face_pick=None, degree=None,
+                      half=14):
     """The voxels behind the number, for one node per case.
 
     Three orthogonal centre planes each, raw on the left and with the sphere painted on
     the right -- blue where it is material, red where it is void. A missing junction is a
     blank window, which needs no statistic to see, and the point of the figure is that
     every other row is a solid disc.
+
+    The `malformed` row is the one that cannot be read off the painted sphere at all: the
+    sphere is full (fill 0.901, blue) because it is smaller than even a stunted junction.
+    What is wrong there is visible only as the junction being visibly narrower than the
+    typical row below it -- which is the whole argument for ranking on size, not fill.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -202,9 +279,28 @@ def plot_node_gallery(out_path, mask, node_pos, r_node, fill, solid, inc_bad, fl
     order = np.flatnonzero(solid & (inc_bad == 0))
     order = order[np.argsort(fill[order])]
     picks = [("missing node", int(k)) for k in np.flatnonzero(flagged)[:2]]
+    # The face group, if there is one. It is empty exactly like the two above, so the row
+    # that distinguishes them is not the sphere -- it is that the lattice simply stops
+    # here, with no severed strut ends left behind and nothing beyond it.
+    if face_pick is not None:
+        tag = "surface node on the flagged face"
+        if degree is not None:
+            tag += f"\ndegree {int(degree[face_pick])}, not 12"
+        picks.append((tag, int(face_pick)))
     # ...but not one of those two, which have all 12 struts gone and would just repeat a
     # row. The interesting case is a node that lost some struts and is still solid.
+    # Malformed goes in BEFORE the strut rows. The smallest junction usually also has
+    # defective struts, so picking by strut count first steals it and the size failure
+    # never gets a row of its own -- which is exactly the distinction the figure is for.
+    if malformed is not None:
+        tag = "malformed: smallest junction"
+        if dia is not None and np.isfinite(dia[int(malformed)]):
+            tag += (f"\n{dia[int(malformed)]:.0f} um vs "
+                    f"{np.nanmedian(dia[solid]):.0f} typical")
+        picks.append((tag, int(malformed)))
+    taken = {k for _, k in picks}
     d = np.flatnonzero(solid & (inc_bad >= 2) & ~flagged)
+    d = np.array([k for k in d if int(k) not in taken], int)
     if d.size:
         picks.append(("2+ struts defective", int(d[np.argsort(fill[d])[0]])))
     picks += [("lowest fill, struts sound", int(order[0])),
@@ -283,25 +379,49 @@ def plot_node_gallery(out_path, mask, node_pos, r_node, fill, solid, inc_bad, fl
     plt.close(fig)
 
 
-def plot(out_path, fill, solid, inc_bad, obs, tot, pbad, mean_k, cut, nd, lut):
+def plot(out_path, fill, solid, inc_bad, obs, tot, pbad, mean_k, cut, nd, lut,
+         dia=None, ratio=None, live=None, zpos=None,
+         flag_all=None, interior=None, pos=None, cut_all=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from math import comb
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.4), facecolor=_SURFACE)
+    nrow = 1 + (dia is not None) + (flag_all is not None)
+    fig, axes = plt.subplots(nrow, 3, figsize=(15, 4.4 * nrow), facecolor=_SURFACE,
+                             squeeze=False)
+    rows = list(axes)
+    axes = rows[0]
+    extra = rows[1] if dia is not None else None
+    space = rows[-1] if flag_all is not None else None
     sel = np.flatnonzero(solid)
 
     ax = axes[0]
     _style(ax)
-    ax.hist(fill[sel], bins=np.linspace(0, 1, 61), color=_BLUE, edgecolor="none")
-    ax.axvline(cut, color=_RED, linewidth=1.4)
-    ax.annotate(f"cut {cut:.2f}\nread off the gap", xy=(cut, 0.72),
-                xycoords=("data", "axes fraction"), xytext=(6, 0),
-                textcoords="offset points", color=_RED, fontsize=7.5, va="top")
+    bins = np.linspace(0, 1, 61)
+    if flag_all is not None:
+        ax.hist(fill, bins=bins, color=_ORANGE, edgecolor="none",
+                label=f"all {len(fill)} nodes")
+        ax.hist(fill[sel], bins=bins, color=_BLUE, edgecolor="none",
+                label=f"interior only ({len(sel)})")
+        ax.axvline(cut_all, color=_RED, linewidth=1.4)
+        ax.annotate(f"cut {cut_all:.2f}\n{int(flag_all.sum())} flagged", xy=(cut_all, 0.72),
+                    xycoords=("data", "axes fraction"), xytext=(6, 0),
+                    textcoords="offset points", color=_RED, fontsize=7.5, va="top")
+        leg = ax.legend(loc="upper center", fontsize=7.5, framealpha=0.9,
+                        facecolor=_SURFACE)
+        for t in leg.get_texts():
+            t.set_color(_INK2)
+        title = "Node sphere fill -- ALL nodes, unfiltered"
+    else:
+        ax.hist(fill[sel], bins=bins, color=_BLUE, edgecolor="none")
+        ax.axvline(cut, color=_RED, linewidth=1.4)
+        ax.annotate(f"cut {cut:.2f}\nread off the gap", xy=(cut, 0.72),
+                    xycoords=("data", "axes fraction"), xytext=(6, 0),
+                    textcoords="offset points", color=_RED, fontsize=7.5, va="top")
+        title = "Node sphere fill, interior nodes"
     ax.set_yscale("log")
-    ax.set_title("Node sphere fill, interior nodes", color=_INK, fontsize=10,
-                 loc="left", pad=8)
+    ax.set_title(title, color=_INK, fontsize=10, loc="left", pad=8)
     ax.set_xlabel("fraction of the sphere that is material", color=_INK2, fontsize=8)
     ax.set_ylabel("nodes (log)", color=_INK2, fontsize=8)
 
@@ -320,8 +440,8 @@ def plot(out_path, fill, solid, inc_bad, obs, tot, pbad, mean_k, cut, nd, lut):
     ax.annotate(f"2 nodes at 0.000, then nothing\nuntil {sv[2]:.3f} -- a gap so wide the\n"
                 "cut cannot be got wrong", xy=(0.30, 0.30), xycoords="axes fraction",
                 color=_RED, fontsize=8, va="top")
-    ax.set_title("Sorted fill: the gap does the thresholding", color=_INK, fontsize=10,
-                 loc="left", pad=8)
+    ax.set_title("Sorted fill, INTERIOR nodes: the gap does the thresholding",
+                 color=_INK, fontsize=10, loc="left", pad=8)
     ax.set_xlabel("node, sorted by fill (log rank)", color=_INK2, fontsize=8)
     ax.set_ylabel("sphere fill", color=_INK2, fontsize=8)
 
@@ -339,6 +459,94 @@ def plot(out_path, fill, solid, inc_bad, obs, tot, pbad, mean_k, cut, nd, lut):
                  loc="left", pad=8)
     ax.set_xlabel("missing or broken struts at the node", color=_INK2, fontsize=8)
     ax.set_ylabel("interior nodes (log)", color=_INK2, fontsize=8)
+
+    if extra is not None:
+        s = np.flatnonzero(live)
+        sd = np.sort(dia[s])
+
+        # Where the fill panel above saturates, size does not -- this is the panel that
+        # carries the malformed class.
+        ax = extra[0]
+        _style(ax)
+        ax.hist(dia[s], bins=60, color=_BLUE, edgecolor="none")
+        ax.axvline(sd[0], color=_RED, linewidth=1.4)
+        ax.annotate(f"smallest junction\n{sd[0]:.0f} um", xy=(sd[0], 0.85),
+                    xycoords=("data", "axes fraction"), xytext=(6, 0),
+                    textcoords="offset points", color=_RED, fontsize=7.5, va="top")
+        ax.set_yscale("log")
+        ax.set_title("Junction size -- does NOT saturate", color=_INK, fontsize=10,
+                     loc="left", pad=8)
+        ax.set_xlabel("diameter at 90% ball fill (um)", color=_INK2, fontsize=8)
+        ax.set_ylabel("nodes (log)", color=_INK2, fontsize=8)
+
+        # The confound, shown rather than corrected away in silence.
+        ax = extra[1]
+        _style(ax)
+        ax.scatter(zpos[s], dia[s], s=3, color=_BLUE, alpha=0.25, edgecolors="none")
+        k0 = s[np.argmin(dia[s])]
+        ax.scatter([zpos[k0]], [dia[k0]], s=45, color=_RED, zorder=3)
+        r = np.corrcoef(zpos[s], dia[s])[0, 1]
+        ax.set_title(f"Size falls with build height (r = {r:+.2f})", color=_INK,
+                     fontsize=10, loc="left", pad=8)
+        ax.set_xlabel("z (voxels, build direction)", color=_INK2, fontsize=8)
+        ax.set_ylabel("diameter at 90% ball fill (um)", color=_INK2, fontsize=8)
+        ax.annotate("so the raw low tail is partly\na list of tall nodes",
+                    xy=(0.04, 0.12), xycoords="axes fraction", color=_INK2, fontsize=8)
+
+        # ...and the ranking that survives it.
+        ax = extra[2]
+        _style(ax)
+        sr = np.sort(ratio[s])
+        rank = np.arange(1, len(sr) + 1)
+        ax.plot(rank, sr, color=_BLUE, linewidth=1.6)
+        ax.scatter(rank[:1], sr[:1], s=35, color=_RED, zorder=3)
+        ax.set_xscale("log")
+        ax.set_xlim(0.8, len(sr) * 1.2)
+        rr = np.corrcoef(zpos[s], ratio[s])[0, 1]
+        ax.set_title(f"Detrended: size vs its own height (r = {rr:+.2f})", color=_INK,
+                     fontsize=10, loc="left", pad=8)
+        ax.set_xlabel("node, sorted by ratio (log rank)", color=_INK2, fontsize=8)
+        ax.set_ylabel("size / what its height predicts", color=_INK2, fontsize=8)
+        ax.annotate(f"lowest {sr[0]:.2f}, then {sr[1]:.2f}\n"
+                    "no threshold applied -- read the gap",
+                    xy=(0.06, 0.90), xycoords="axes fraction", color=_RED, fontsize=8,
+                    va="top")
+
+    if space is not None:
+        f = np.flatnonzero(flag_all)
+        fi = f[interior[f]]                       # interior hits -- the build failures
+        fs = f[~interior[f]]                      # surface hits -- one face, on this part
+        views = ((2, 1, "x", "y"), (2, 0, "x", "z"), (1, 0, "y", "z"))
+        for ax, (a, b, na, nb) in zip(space, views):
+            _style(ax)
+            ax.scatter(pos[:, a], pos[:, b], s=1.5, color=_GRID, edgecolors="none")
+            ax.scatter(pos[fs, a], pos[fs, b], s=16, color=_ORANGE, edgecolors="none",
+                       label=f"surface ({len(fs)})")
+            ax.scatter(pos[fi, a], pos[fi, b], s=70, facecolors="none", edgecolors=_RED,
+                       linewidths=2.0, label=f"interior ({len(fi)})")
+            ax.set_xlabel(f"{na} (voxels)", color=_INK2, fontsize=8)
+            ax.set_ylabel(f"{nb} (voxels)", color=_INK2, fontsize=8)
+            ax.set_aspect("equal", adjustable="datalim")
+            ax.grid(False)
+        # The whole 184-vs-2 question in one picture. A flat face of the design with no
+        # part behind it collapses to a LINE in the two views that contain its normal, and
+        # fills the frame in the third; scattered build failures do neither. Label each
+        # view by what it is actually showing rather than repeating one caption.
+        space[0].set_title(
+            f"WHERE the {int(flag_all.sum())} flagged nodes are  "
+            f"(cut {cut_all:.3f}, all {len(fill)} nodes)",
+            color=_INK, fontsize=10, loc="left", pad=8)
+        space[1].set_title("face seen face-on: orange fills the frame",
+                           color=_INK, fontsize=10, loc="left", pad=8)
+        space[2].set_title("face edge-on: one line = extent mismatch",
+                           color=_INK, fontsize=10, loc="left", pad=8)
+        space[0].annotate("red = interior (fully surrounded by lattice), so not a "
+                          "surface effect", xy=(0.02, -0.16), xycoords="axes fraction",
+                          color=_RED, fontsize=7.5)
+        leg = space[0].legend(loc="upper right", fontsize=8, framealpha=0.9,
+                              facecolor=_SURFACE)
+        for t in leg.get_texts():
+            t.set_color(_INK2)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=140, facecolor=_SURFACE)

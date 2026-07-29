@@ -256,18 +256,28 @@ def plot_class_profiles(prof, lab, ok, out_path, um, nominal_um=None):
 
 def plot_section_gallery(mask, pos, pairs, r_strut, lab, sec, ok, out_path, um,
                          n_total, trim_frac=0.20, window_factor=2.5, n_show=8, seed=0,
-                         nominal_um=350.0, extra=None):
-    """The actual sections, with the nominal circle on them -- the picture behind the number."""
+                         nominal_um=350.0, extra=None, picks=None, per_class=1,
+                         title=None):
+    """The actual sections, with the nominal circle on them -- the picture behind the number.
+
+    `picks` is an explicit [(label, strut_id), ...] to render, for inspecting particular
+    struts rather than a sample. When it is None the rows are drawn at random, `per_class`
+    of them from each class, which is the survey view.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    rng = np.random.default_rng(seed)
-    picks = []
-    for name in ORDER:
-        idx = np.flatnonzero(ok & (lab == name))
-        if idx.size:
-            picks.append((name, int(rng.choice(idx))))
+    if picks is None:
+        rng = np.random.default_rng(seed)
+        picks = []
+        for name in ORDER:
+            idx = np.flatnonzero(ok & (lab == name))
+            if idx.size:
+                take = rng.choice(idx, size=min(per_class, idx.size), replace=False)
+                picks += [(name, int(k)) for k in np.atleast_1d(take)]
+    if not picks:
+        raise ValueError("nothing to draw: no strut matched the requested selection")
 
     # Two views of the same strut on one row, because they fail in opposite directions.
     # The lateral view shows where material starts and stops -- a gap is a white column
@@ -348,9 +358,10 @@ def plot_section_gallery(mask, pos, pairs, r_strut, lab, sec, ok, out_path, um,
                  f"empty {int(sec['empty_sections'][sid])}/{n_total}{conn}",
                  color=_INK2, fontsize=7.5, va="center")
 
-    fig.suptitle("One strut per class: lateral view through the axis (left) and "
-                 f"cross-sections along it (right)   red = nominal {nominal_um:.0f} um   "
-                 "blue = trimmed extent,  orange dashed = junction centres",
+    fig.suptitle(title or
+                 ("One strut per class: lateral view through the axis (left) and "
+                  f"cross-sections along it (right)   red = nominal {nominal_um:.0f} um   "
+                  "blue = trimmed extent,  orange dashed = junction centres"),
                  color=_INK, fontsize=11, x=0.006, ha="left", y=0.995)
     fig.savefig(out_path, dpi=150, facecolor=_SURFACE)
     plt.close(fig)

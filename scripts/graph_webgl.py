@@ -168,6 +168,8 @@ def main():
     p.add_argument("--note", default="")
     p.add_argument("--drop-caps", action="store_true", default=True,
                    help="exclude boundary-cap struts (about half are never printed)")
+    p.add_argument("--include-caps", action="store_true",
+                   help="include boundary-cap struts even when --drop-caps is enabled")
     args = p.parse_args()
 
     d = np.load(args.table)
@@ -179,7 +181,7 @@ def main():
     v, c = np.unique(edge, return_counts=True)
     caps = set(v[c < c.max() * 0.5].tolist())
     iscap = np.array([e in caps for e in edge])
-    keep = ~iscap if args.drop_caps else np.ones(len(pairs), bool)
+    keep = np.ones(len(pairs), bool) if args.include_caps else ~iscap
 
     # class per strut, by coverage of material along the centreline
     cls = np.zeros(len(pairs), dtype=np.int32)

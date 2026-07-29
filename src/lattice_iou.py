@@ -517,6 +517,47 @@ def measure_nodes(mask, node_pos, r_node, half=12, env_factor=1.6, size_fill=0.9
     return out
 
 
+def detrend_by_height(values, z, bins=10, exclude=None):
+    """Divide out the build-height trend in a per-node measurement.
+
+    Junction size on this specimen falls steadily with build height -- `diameter_fill_um`
+    correlates with z at -0.47 -- so the smallest raw junctions are disproportionately the
+    highest ones. Ranking on the raw value therefore ranks partly by z. This fits the
+    MEDIAN against z in `bins` equal-count bands, interpolates it, and returns the ratio
+    of each value to what its height predicts, so 1.0 is "normal for this height".
+
+    The trend is a real property of the print, not noise, so it is divided out for RANKING
+    only and both numbers are reported. A junction that is small because everything at its
+    height is small is a process observation; one that is small against its own neighbours
+    is a defect, and only the second should lead a defect list.
+
+    `exclude` masks nodes out of the trend fit without dropping them from the output --
+    pass the absent nodes, whose zeros would otherwise drag the local median down.
+
+    Returns (ratio, expected), both the length of `values`.
+    """
+    values = np.asarray(values, float)
+    z = np.asarray(z, float)
+    fit = np.ones(len(values), bool) if exclude is None else ~np.asarray(exclude, bool)
+    fit &= np.isfinite(values) & (values > 0)
+    if fit.sum() < 2 * bins:
+        return np.ones_like(values), np.full_like(values, np.median(values[fit]) if
+                                                   fit.any() else 1.0)
+
+    edges = np.quantile(z[fit], np.linspace(0, 1, bins + 1))
+    edges[0], edges[-1] = -np.inf, np.inf
+    idx = np.clip(np.searchsorted(edges, z[fit], side="right") - 1, 0, bins - 1)
+    centre = np.array([np.median(z[fit][idx == b]) if (idx == b).any() else np.nan
+                       for b in range(bins)])
+    level = np.array([np.median(values[fit][idx == b]) if (idx == b).any() else np.nan
+                      for b in range(bins)])
+    good = np.isfinite(centre) & np.isfinite(level)
+    expected = np.interp(z, centre[good], level[good])
+    ratio = np.divide(values, expected, out=np.zeros_like(values),
+                      where=expected > 0)
+    return ratio, expected
+
+
 def measure_node_sphere_fill(mask, node_pos, r_node, progress_every=1000, log=print):
     """How much of a sphere about each node is material. That is the whole test.
 

@@ -1,0 +1,122 @@
+{
+  "r_thr_vox": 4.700000000000001,
+  "match_frac": 0.25,
+  "planes_used": [
+    109,
+    148,
+    188,
+    227,
+    264,
+    304,
+    345,
+    383,
+    421,
+    462,
+    500,
+    541,
+    578,
+    621,
+    655,
+    696
+  ],
+  "planes_rejected": [
+    {
+      "z": 46,
+      "reason": "median residual 6.9 vox; 1100 sites for 369 blobs"
+    },
+    {
+      "z": 727,
+      "reason": "basis angle 115 deg; 7850 sites for 249 blobs"
+    }
+  ],
+  "pitch_vox_median": 55.34211640878775,
+  "basis_angle_deg_median": 89.47140742831431,
+  "interior_sites": 2126,
+  "interior_empty": 3,
+  "interior_empty_pct": 0.14111006585136407,
+  "edge_empty": 32,
+  "candidates": [
+    {
+      "z": 421,
+      "y": 679.9221081918578,
+      "x": 611.0928835484558,
+      "ring": "interior",
+      "nearest_blob_vox": 55.12846908051152,
+      "material_frac": 0.0,
+      "inscribed_radius_vox": 0.0,
+      "raw_ct_mean": 30671.79849379198,
+      "design_node": 1935,
+      "design_dist_vox": 2.187369482533672,
+      "design_degree": 12,
+      "sphere_fill_3d": 0.0,
+      "skan_dist_vox": 54.88760921616641,
+      "skan_degree": 11
+    },
+    {
+      "z": 500,
+      "y": 683.286141780658,
+      "x": 143.3938629525823,
+      "ring": "interior",
+      "nearest_blob_vox": 55.907081694866314,
+      "material_frac": 0.0,
+      "inscribed_radius_vox": 0.0,
+      "raw_ct_mean": 30821.362711174435,
+      "design_node": 2189,
+      "design_dist_vox": 0.8320602130172928,
+      "design_degree": 12,
+      "sphere_fill_3d": 0.0,
+      "skan_dist_vox": 55.49614854878168,
+      "skan_degree": 11
+    },
+    {
+      "z": 578,
+      "y": 210.0886157480385,
+      "x": 374.2434120616008,
+      "ring": "interior",
+      "nearest_blob_vox": 54.89875283117462,
+      "material_frac": 0.4300834520659475,
+      "inscribed_radius_vox": 4.898979485566356,
+      "raw_ct_mean": 39510.1174435172,
+      "design_node": 2605,
+      "design_dist_vox": 1.612249882984459,
+      "design_degree": 12,
+      "sphere_fill_3d": 0.9013698697090149,
+      "skan_dist_vox": 3.378171568290421,
+      "skan_degree": 9
+    }
+  ],
+  "um_per_voxel": 57.73787635438165,
+  "pitch_um_median": 3195.336274400383,
+  "sweep": [
+    [
+      4.0,
+      1901,
+      2
+    ],
+    [
+      4.5,
+      2126,
+      3
+    ],
+    [
+      5.0,
+      2126,
+      3
+    ],
+    [
+      5.5,
+      1903,
+      11
+    ],
+    [
+      6.0,
+      1874,
+      13
+    ],
+    [
+      6.5,
+      588,
+      153
+    ]
+  ]
+}
