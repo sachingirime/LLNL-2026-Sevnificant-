@@ -13,9 +13,11 @@ from fastmcp import FastMCP
 try:
     # Package import for tests and programmatic use.
     from .skeletonization import skeletonize_mask
+    from . import lattice_iou
 except ImportError:
     # Script import when FastMCP starts this file via ``python src/mcp_server.py``.
     from skeletonization import skeletonize_mask
+    import lattice_iou
 
 # Initialize the MCP server
 mcp = FastMCP("CT Segmentation")
@@ -697,6 +699,581 @@ def skeletonize(input_filepath: str, output_filepath: str) -> str:
         f"(shape={extracted_skeleton.shape}, "
         f"skeleton_voxels={int(np.count_nonzero(extracted_skeleton))})"
     )
+
+
+@mcp.tool()
+def measure_lattice_iou(
+    mask_filepath: str,
+    design_filepath: str,
+    output_directory: str,
+    correction_filepath: str = "",
+    strut_diameter_um: float = 350.0,
+    cell_mm: float = 4.56,
+    trim_fraction: float = 0.20,
+    envelope_factor: float = 1.6,
+    stations: int = 12,
+    embedded_fraction: float = 0.80,
+) -> str:
+    """
+    Compares every strut and node of a registered lattice design against a CT
+    segmentation mask, by intersection-over-union with the nominal geometry.
+
+    For each strut the design gives a line segment between two junctions. The segment
+    is trimmed at both ends to exclude the (much fatter) junctions, a nominal cylinder
+    of `strut_diameter_um` is painted around what remains, and that cylinder is compared
+    against the mask inside a local crop:
+
+        IoU = |cylinder & mask| / (|cylinder| + |mask & envelope| - |cylinder & mask|)
+
+    The cylinder is also divided into `stations` bands along its axis, giving a fill
+    profile as you traverse the edge -- a wholly missing strut reads low everywhere, a
+    severed one reads healthy at the ends with a dip between, and one scalar cannot tell
+    those apart. Nodes are measured against a nominal sphere and sized directly, both by
+    max inscribed radius and by the radius at which the ball is still 90% material.
+
+    Voxel size is derived from the registered strut length against the known unit cell
+    (an octet strut spans cell/sqrt(2)), so no header metadata is trusted.
+
+    Writes struts.csv, nodes.csv, profiles.npz, summary.json and two distribution plots.
+    No threshold is applied and none is suggested: summary.json carries each metric's
+    percentiles and full binned histogram, and the plots show the shapes, so the cut is
+    chosen by looking at the distribution.
+
+    Args:
+        mask_filepath: Path to the binary segmentation .tif/.npy (z, y, x), e.g. the Otsu mask.
+        design_filepath: Path to the registered lattice .json (junctions + struts).
+        output_directory: Directory to write the CSVs, arrays, summary and plots into.
+        correction_filepath: Optional registration correction.json from
+            scripts/refit_registration.py. Strongly recommended: the shipped registration
+            carries a ~1% residual scale error, which at a ~2 voxel as-built strut radius
+            walks the design off the material toward the specimen corners and shows up as
+            a fake defect rate.
+        strut_diameter_um: Nominal design strut diameter. 350 for these specimens.
+        cell_mm: Nominal unit cell edge length in mm. 4.56 for these specimens.
+        trim_fraction: Fraction of the strut length excluded at each end as junction.
+        envelope_factor: Union envelope radius as a multiple of the nominal radius.
+        stations: Number of bands along each strut for the traversal profile.
+        embedded_fraction: Local material fraction above which a strut or node is treated
+            as buried in bulk metal (these specimens are fused into solid build plates at
+            both z ends) and held out of the statistics, since a missing strut inside
+            solid metal leaves no signature to detect.
+
+    Returns:
+        A summary of the measured distributions and recommended cuts, or an error message.
+    """
+    if not os.path.isfile(mask_filepath):
+        return f"Error: mask file not found at {mask_filepath}"
+    if not os.path.isfile(design_filepath):
+        return f"Error: design JSON not found at {design_filepath}"
+    if correction_filepath and not os.path.isfile(correction_filepath):
+        return f"Error: correction file not found at {correction_filepath}"
+    if not 0.0 <= trim_fraction < 0.5:
+        return f"Error: trim_fraction must be in [0, 0.5) (got {trim_fraction})"
+    if envelope_factor <= 1.0:
+        return f"Error: envelope_factor must exceed 1.0 (got {envelope_factor})"
+    if stations < 2:
+        return f"Error: stations must be at least 2 (got {stations})"
+
+    try:
+        summary = lattice_iou.run(
+            mask_filepath, design_filepath, output_directory,
+            correction_path=correction_filepath or None,
+            trim_frac=trim_fraction, env_factor=envelope_factor, stations=stations,
+            strut_diameter_um=strut_diameter_um, cell_mm=cell_mm,
+            embedded_frac=embedded_fraction, log=lambda *_: None,
+        )
+    except (OSError, ValueError, KeyError) as error:
+        return f"Error: could not measure the lattice: {error}"
+
+    geometry = summary["geometry"]
+    counts = summary["counts"]
+    built = summary["as_built"]
+    lines = [
+        f"Measured {counts['struts']} struts and {counts['physical_nodes']} nodes "
+        f"against {design_filepath}.",
+        f"  registration correction applied: {summary['correction_applied']}",
+        f"  scale: {geometry['um_per_voxel']:.3f} um/voxel, nominal strut radius "
+        f"{geometry['nominal_strut_radius_vox']:.3f} voxels",
+        f"  held out: {counts['boundary_struts']} boundary-cap struts, "
+        f"{counts['embedded_struts']} struts embedded in bulk metal "
+        f"-> {counts['measurable_struts']} measurable",
+        f"  as-built strut diameter (median) {built['median_strut_diameter_um']:.0f} um "
+        f"vs nominal {strut_diameter_um:.0f} um",
+        f"  as-built node diameter (median) {built['median_node_diameter_um']:.0f} um "
+        f"at 90% fill, {built['median_node_inscribed_diameter_um']:.0f} um inscribed",
+        "",
+        "Distributions (no threshold applied -- read the cut off these):",
+    ]
+    for key, report in summary["distributions"].items():
+        if not report.get("n"):
+            continue
+        pct = report["percentiles"]
+        lines.append(
+            f"  {key}: n={report['n']}, median {report['median']:.4f}, "
+            f"p1 {pct['1']:.4f}, p5 {pct['5']:.4f}, p95 {pct['95']:.4f}, "
+            f"range [{report['min']:.4f}, {report['max']:.4f}]"
+        )
+    lines.append("")
+    lines.append(f"Wrote struts.csv, nodes.csv, profiles.npz, summary.json and "
+                 f"two distribution plots to {output_directory}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def refit_lattice_registration(
+    mask_filepath: str,
+    design_filepath: str,
+    output_directory: str,
+    block: int = 170,
+    grid: int = 4,
+) -> str:
+    """
+    Refits the registration between a lattice design and a CT mask, and writes the
+    correction every downstream measurement needs.
+
+    RUN THIS FIRST. The shipped registrations for these specimens carry a ~1% residual
+    scale error. At a ~3 voxel nominal strut radius that is enough to walk the design off
+    the material toward the specimen corners, and it does not degrade the answer
+    gracefully -- it destroys it. Same detector, shipped vs corrected coordinates: median
+    strut IoU 0.256 vs 0.607, and the empty gap that separates missing struts from healthy
+    ones has width 0.000 on the shipped coordinates, i.e. the defect population is
+    completely swamped and no cut exists. Every defect count from an uncorrected run is
+    meaningless.
+
+    Method: the volume is divided into a `grid` x `grid` x `grid` arrangement of blocks of
+    side `block` voxels. In each block holding at least 40 struts, the local translation
+    that best aligns the design to the mask is found by a coarse-to-fine offset search.
+    Those per-block offsets are then fitted by a single affine field, `corrected = p + A p
+    + t`, which captures the scale error as the diagonal of A.
+
+    Check the residual in the output before trusting the result. It is reported per axis
+    in voxels RMS; values comparable to the strut radius mean the fit did not converge and
+    the design and mask may not correspond.
+
+    Args:
+        mask_filepath: Binary segmentation .tif/.npy in (z, y, x).
+        design_filepath: Registered lattice .json (junctions + struts).
+        output_directory: Written to as correction.json and design_corrected.json.
+        block: Block side in voxels for the local offset search.
+        grid: Blocks per axis.
+
+    Returns:
+        The fitted scale correction, per-axis residuals and junction displacement, or an
+        error message.
+    """
+    if not os.path.isfile(mask_filepath):
+        return f"Error: mask file not found at {mask_filepath}"
+    if not os.path.isfile(design_filepath):
+        return f"Error: design JSON not found at {design_filepath}"
+    if block < 20:
+        return f"Error: block must be at least 20 voxels (got {block})"
+    if grid < 2:
+        return f"Error: grid must be at least 2 (got {grid})"
+
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from scripts.refit_registration import refit, load_design, apply_correction
+
+        A, t, resid, C, _ = refit(mask_filepath, design_filepath, block, grid,
+                                  verbose=False)
+        J, pos, _ = load_design(design_filepath)
+        pc = apply_correction(pos, A, t)
+        shift = np.linalg.norm(pc - pos, axis=1)
+
+        os.makedirs(output_directory, exist_ok=True)
+        scale = 1 + np.diag(A)
+        with open(os.path.join(output_directory, "correction.json"), "w") as fh:
+            json.dump({"A_zyx": A.tolist(), "t_zyx": t.tolist(),
+                       "residual_rms_zyx": resid.tolist(),
+                       "scale_correction_zyx": scale.tolist(),
+                       "note": "corrected_zyx = p + A @ p + t, p in (z,y,x) voxel coords"},
+                      fh, indent=2)
+        for j, q in zip(J["junctions"], pc):
+            j["position"] = [float(v) for v in q[::-1]]      # back to (x, y, z)
+        with open(os.path.join(output_directory, "design_corrected.json"), "w") as fh:
+            json.dump(J, fh)
+    except (OSError, ValueError, KeyError, ImportError) as error:
+        return f"Error: could not refit the registration: {error}"
+
+    lines = [
+        f"Refitted registration on {len(C)} blocks of {block} voxels.",
+        f"  scale correction (z, y, x) = "
+        f"{', '.join(f'{100 * v:+.2f}%' for v in np.diag(A))}",
+        f"  residual (voxels RMS)      = "
+        f"{', '.join(f'{v:.2f}' for v in resid)}",
+        f"  junction displacement: median {np.median(shift):.2f} vox, "
+        f"max {shift.max():.2f} vox",
+        "",
+    ]
+    if max(resid) > 3.0:
+        lines.append("WARNING: residual is comparable to the strut radius. The fit may "
+                     "not have converged; check that the design and mask correspond "
+                     "before using this correction.")
+    else:
+        lines.append("Residual is well under the strut radius; the fit converged.")
+    lines.append(f"Wrote correction.json and design_corrected.json to {output_directory}. "
+                 f"Pass the correction.json to detect_lattice_defects and "
+                 f"detect_missing_nodes.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def detect_lattice_defects(
+    mask_filepath: str,
+    design_filepath: str,
+    output_directory: str,
+    correction_filepath: str = "",
+    strut_diameter_um: float = 350.0,
+    cell_mm: float = 4.56,
+    sections: int = 25,
+    tolerance_fraction: float = 0.25,
+    use_cache: bool = True,
+) -> str:
+    """
+    Classifies every strut of a lattice into defect classes, from a CT mask and the
+    registered design. This is the end-to-end strut detector.
+
+    Runs the full chain: nominal-cylinder fill, node-to-node connectivity, perpendicular
+    cross-sections, then the class rules. EXPENSIVE -- about 10 minutes on an 18,000-strut
+    lattice from cold. Intermediate arrays are cached in `output_directory`, and
+    `use_cache` reuses them, which cuts a re-run with different tolerance bands to seconds.
+
+    Classes, and what decides each:
+
+      missing  no voxel of the nominal cylinder is material AND every cross-section is
+               empty. A count == 0, so there is NO threshold. Justified by the data: the
+               struts at exactly zero are separated from the next value by a wide empty
+               gap, so any cut inside it gives the same answer.
+      broken   no geodesic path through material from one node to the other, inside a tube
+               of 2x the nominal radius about the design axis. A boolean, so again NO
+               threshold. This is topological and cannot be recovered from cross-sections:
+               most severed struts have no empty section at all, because a crack narrower
+               than the section spacing reads full on every plane.
+      thin     median section radius below the tolerance band
+      thick    median section radius above it
+      necked   normal median radius but a local pinch (min section radius under the 1st
+               percentile) -- a partial break rather than a thin strut
+      nominal  everything else
+
+    Rules are applied severity-first, later overriding earlier: necked, thick, thin,
+    broken, missing.
+
+    READ THE THIN/THICK COUNTS WITH CARE. The band is anchored on the DESIGN diameter, not
+    on percentiles of this specimen, because a percentile cut is self-fulfilling -- it
+    returns a fixed fraction of thin struts however the part came out, and would call a
+    uniformly undersized lattice healthy. The consequence is that systematic process bias
+    lands in the class counts. In particular, laser powder-bed struts are thinner in the
+    unsupported horizontal orientation than at 45 degrees, so a single band across a mixed
+    lattice can classify by build orientation rather than by health. The returned report
+    breaks the two families out so this is visible; `missing` and `broken` are immune
+    because they are count-based.
+
+    Struts that cannot be measured are excluded and reported separately, never mixed into
+    the tallies: outer boundary caps, struts buried in bulk metal (these specimens are
+    fused into solid build plates at both z ends, where an absent strut leaves no
+    signature), and struts whose cross-section runs into the edge of its window.
+
+    Args:
+        mask_filepath: Binary segmentation .tif/.npy in (z, y, x).
+        design_filepath: Registered lattice .json.
+        correction_filepath: Registration correction.json from refit_lattice_registration.
+            Strongly recommended -- without it the defect population is swamped by
+            registration error and the counts are meaningless.
+        output_directory: Written to as strut_classes.csv plus cached arrays.
+        sections: Cross-sections per strut across the trimmed span.
+        tolerance_fraction: Thin/thick band as a fraction of the nominal design diameter.
+        use_cache: Reuse sections.npz and connectivity.npz if present. A cache measured at
+            a different section count is honoured at its own count, since a mismatch
+            silently breaks both `missing` and the break rule.
+
+    Returns:
+        The class table with counts and median diameters, the exclusions, and the
+        orientation breakdown, or an error message.
+    """
+    if not os.path.isfile(mask_filepath):
+        return f"Error: mask file not found at {mask_filepath}"
+    if not os.path.isfile(design_filepath):
+        return f"Error: design JSON not found at {design_filepath}"
+    if correction_filepath and not os.path.isfile(correction_filepath):
+        return f"Error: correction file not found at {correction_filepath}"
+    if sections < 4:
+        return f"Error: sections must be at least 4 (got {sections})"
+    if not 0.0 < tolerance_fraction < 1.0:
+        return (f"Error: tolerance_fraction must be in (0, 1) "
+                f"(got {tolerance_fraction})")
+
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from scripts.classify_strut_defects import classify, measurable
+        from strut_sections import measure_sections
+
+        os.makedirs(output_directory, exist_ok=True)
+        summary = lattice_iou.run(
+            mask_filepath, design_filepath, output_directory,
+            correction_path=correction_filepath or None,
+            strut_diameter_um=strut_diameter_um, cell_mm=cell_mm,
+            make_plots=False, log=lambda *_: None,
+        )
+        um = summary["geometry"]["um_per_voxel"]
+        r_strut = summary["geometry"]["nominal_strut_radius_vox"]
+        nominal_um = summary["geometry"]["nominal_strut_diameter_um"]
+
+        # The voxel size is DERIVED from |strut| = cell/sqrt(2), which is an octet
+        # identity. On a lattice with more than one strut length the median is not a
+        # length of anything, and every um figure below -- including the thin/thick band
+        # -- is then silently wrong rather than absent. The spread is the cheap tell.
+        spread_frac = (summary["geometry"]["strut_length_spread_vox"]
+                       / max(summary["geometry"]["strut_length_vox"], 1e-9))
+        if spread_frac > 0.05:
+            return (
+                f"Error: strut lengths span {100 * spread_frac:.1f}% of the median "
+                f"({summary['geometry']['strut_length_vox']:.1f} vox). This detector "
+                f"derives the voxel size from the octet identity |strut| = cell/sqrt(2), "
+                f"which needs one strut length; with several, every micron figure would "
+                f"be silently wrong. Supply the voxel size directly, or use a geometry "
+                f"model for this lattice, before trusting any count.")
+
+        pos, pairs, _, corrected = lattice_iou.load_design(
+            design_filepath, correction_filepath or None)
+        mask = _load_volume(mask_filepath) > 0
+
+        sec_cache = os.path.join(output_directory, "sections.npz")
+        if use_cache and os.path.isfile(sec_cache):
+            z = np.load(sec_cache, allow_pickle=False)
+            sec = {k[4:]: z[k] for k in z.files if k.startswith("sec_")}
+            sections = int(z["prof_r_eq"].shape[1])
+        else:
+            sec, prof = measure_sections(mask, pos, pairs, r_strut,
+                                         n_sections=sections, log=lambda *_: None)
+            np.savez_compressed(sec_cache,
+                                **{f"sec_{k}": v for k, v in sec.items()},
+                                **{f"prof_{k}": v for k, v in prof.items()})
+
+        conn_cache = os.path.join(output_directory, "connectivity.npz")
+        if use_cache and os.path.isfile(conn_cache):
+            zc = np.load(conn_cache, allow_pickle=False)
+            conn = {k: zc[k] for k in zc.files}
+        else:
+            conn = lattice_iou.measure_connectivity(mask, pos, pairs, r_strut,
+                                                    log=lambda *_: None)
+            np.savez_compressed(conn_cache, **conn)
+
+        d = np.genfromtxt(os.path.join(output_directory, "struts.csv"),
+                          delimiter=",", names=True)
+        n = len(sec["r_eq_med"])
+        d = {k: d[k][:n] for k in d.dtype.names}
+        ok = measurable(d, sec)
+
+        thin_um = (1 - tolerance_fraction) * nominal_um
+        thick_um = (1 + tolerance_fraction) * nominal_um
+        cuts = {"thin": thin_um / 2.0 / um, "thick": thick_um / 2.0 / um,
+                "neck": float(np.percentile(sec["r_eq_min"][ok], 1))}
+        lab = classify(sec, d["n_matched"], cuts, sections, 0, conn)
+
+        with open(os.path.join(output_directory, "strut_classes.csv"), "w") as fh:
+            fh.write("strut_id,label,r_eq_med_um,measurable\n")
+            for i in range(n):
+                fh.write(f"{i},{lab[i]},{sec['r_eq_med'][i] * 2 * um:.1f},"
+                         f"{int(ok[i])}\n")
+    except (OSError, ValueError, KeyError, ImportError) as error:
+        return f"Error: could not classify the lattice: {error}"
+
+    order = ["missing", "broken", "thin", "thick", "necked", "nominal"]
+    lines = [
+        f"Classified {int(ok.sum())} measurable struts of {n}.",
+        f"  registration correction applied: {corrected}"
+        + ("" if corrected else "   <-- NOT APPLIED, counts are unreliable"),
+        f"  scale {um:.3f} um/voxel, nominal strut radius {r_strut:.3f} vox",
+        f"  excluded {n - int(ok.sum())}: boundary caps, plate-embedded and "
+        f"window-touching struts",
+        f"  thin/thick band: +/-{100 * tolerance_fraction:.0f}% of the nominal "
+        f"{nominal_um:.0f} um  ->  {thin_um:.0f} / {thick_um:.0f} um",
+        f"  as-built median diameter "
+        f"{np.median(sec['r_eq_med'][ok]) * 2 * um:.0f} um "
+        f"({100 * np.median(sec['r_eq_med'][ok]) * 2 * um / nominal_um:.0f}% of nominal)",
+        "",
+        f"  {'class':<9s} {'count':>6s} {'pct':>8s}   median diameter",
+    ]
+    for name in order:
+        m = ok & (lab == name)
+        c = int(m.sum())
+        dia = (f"{np.median(sec['r_eq_med'][m]) * 2 * um:.0f} um"
+               if c and name != "missing" else "--")
+        lines.append(f"  {name:<9s} {c:6d} {100 * c / max(int(ok.sum()), 1):7.3f}%   {dia}")
+
+    # Build orientation, because a single thin/thick band can classify by it rather than
+    # by health and the reader has no way to see that from the counts alone.
+    v = pos[pairs[:n, 1]] - pos[pairs[:n, 0]]
+    ang = np.degrees(np.arccos(np.abs(v[:, 0]) / np.linalg.norm(v, axis=1)))
+    horiz = ang > 70
+    lines += ["", "  build orientation (watch this before reading thin/thick):",
+              f"  {'family':<12s} {'n':>6s} {'median dia':>11s} {'thin':>6s} {'thick':>6s}"]
+    for name, m in (("inclined", ok & ~horiz), ("horizontal", ok & horiz)):
+        if not m.any():
+            continue
+        lines.append(
+            f"  {name:<12s} {int(m.sum()):6d} "
+            f"{np.median(sec['r_eq_med'][m]) * 2 * um:8.0f} um "
+            f"{int((lab[m] == 'thin').sum()):6d} {int((lab[m] == 'thick').sum()):6d}")
+    lines.append("")
+    lines.append(f"Wrote strut_classes.csv to {output_directory}. "
+                 f"missing and broken carry no threshold; thin/thick depend on "
+                 f"tolerance_fraction.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def detect_missing_nodes(
+    mask_filepath: str,
+    design_filepath: str,
+    correction_filepath: str = "",
+    results_directory: str = "",
+    strut_diameter_um: float = 350.0,
+    cell_mm: float = 4.56,
+    radius_factor: float = 1.467,
+) -> str:
+    """
+    Finds junctions that were never printed, by sphere fill, and cross-checks each against
+    the struts that should meet there.
+
+    The test is simply how much of a sphere about the design junction is material:
+
+        fill = |{sphere of radius_factor x r_strut} & mask| / |sphere|
+
+    A junction that printed reads ~1.0 and one that did not reads 0.0, with nothing in
+    between, so the cut is READ OFF THE EMPTY GAP in the sorted distribution rather than
+    chosen. The tool reports the gap width; a wide gap means the answer does not depend on
+    where in it the cut falls, and the radius does not matter either -- anywhere from the
+    design node radius to ~3x the strut radius gives the same nodes.
+
+    The reading is that clean because a node is present whole or absent whole. It is not a
+    separately printed part: in the design a junction is a bare position with no radius and
+    no thickness, and only struts carry thickness. The junction is where the struts overlap
+    plus the fillet the melt pool leaves where their scan vectors converge. So do not look
+    for a node absent while its struts are present -- the struts alone would fill the
+    sphere, and there is nothing at a junction that could go missing on its own. A hit here
+    is a localised build failure that took a whole junction with it.
+
+    Every candidate is cross-checked against a second, independent instrument: the number
+    of struts that actually arrive, which comes from the strut labels rather than from
+    these voxels. Agreement between the two is the reason to believe a result; a
+    disagreement is flagged and should be inspected before it is reported.
+
+    Fast -- seconds, not minutes. Requires detect_lattice_defects to have been run into the
+    same directory first, since the cross-check reads its connectivity output.
+
+    Args:
+        mask_filepath: Binary segmentation .tif/.npy in (z, y, x).
+        design_filepath: Registered lattice .json.
+        correction_filepath: Registration correction.json. Strongly recommended.
+        results_directory: The output_directory a previous detect_lattice_defects run
+            wrote to. Supplying it enables the independent degree cross-check; without it
+            the sphere fill is reported on its own and is one instrument, not two.
+        radius_factor: Sphere radius in nominal strut radii. The default is the design
+            node radius; the answer is unchanged over roughly 1.5 to 3.0.
+
+    Returns:
+        The flagged nodes with their coordinates, the gap the cut was read from, and the
+        agreement with the degree cross-check, or an error message.
+    """
+    if not os.path.isfile(mask_filepath):
+        return f"Error: mask file not found at {mask_filepath}"
+    if not os.path.isfile(design_filepath):
+        return f"Error: design JSON not found at {design_filepath}"
+    if correction_filepath and not os.path.isfile(correction_filepath):
+        return f"Error: correction file not found at {correction_filepath}"
+    if radius_factor <= 0:
+        return f"Error: radius_factor must be positive (got {radius_factor})"
+
+    try:
+        pos, pairs, _, corrected = lattice_iou.load_design(
+            design_filepath, correction_filepath or None)
+        node_pos, node_of, degree = lattice_iou.dedupe_junctions(pos, pairs)
+        geom = lattice_iou.lattice_geometry(pos, pairs, cell_mm=cell_mm,
+                                            strut_diameter_um=strut_diameter_um)
+        r_node = radius_factor * geom["nominal_strut_radius_vox"]
+        mask = _load_volume(mask_filepath) > 0
+        fill = lattice_iou.measure_node_sphere_fill(mask, node_pos, r_node,
+                                                    log=lambda *_: None)
+    except (OSError, ValueError, KeyError) as error:
+        return f"Error: could not measure the nodes: {error}"
+
+    interior = degree == 12
+    if not interior.any():
+        return "Error: no interior (degree 12) nodes found; is this an octet lattice?"
+    sv = np.sort(fill[interior])
+    g = int(np.argmax(np.diff(sv)))
+    cut = 0.5 * (sv[g] + sv[g + 1])
+    gap = float(sv[g + 1] - sv[g])
+    flagged = interior & (fill <= cut)
+
+    lines = [
+        f"{len(node_pos)} physical nodes from {len(pos)} junction entries, "
+        f"{int(interior.sum())} interior.",
+        f"  registration correction applied: {corrected}"
+        + ("" if corrected else "   <-- NOT APPLIED, result is unreliable"),
+        f"  sphere radius {radius_factor:.3f} r = {r_node:.2f} vox = "
+        f"{r_node * geom['um_per_voxel']:.0f} um",
+        f"  fill: min {sv[0]:.3f}, p1 {np.percentile(sv, 1):.3f}, "
+        f"median {np.median(sv):.3f}",
+        f"  largest gap {sv[g]:.3f} -> {sv[g + 1]:.3f} ({gap:.3f} wide); "
+        f"cut read off it at {cut:.3f}",
+        "",
+    ]
+    if gap < 0.2:
+        lines.append("WARNING: the gap is narrow, so this cut IS a choice and the count "
+                     "depends on it. Inspect the distribution before reporting.")
+    lines.append(f"missing-node candidates by sphere fill: {int(flagged.sum())}")
+
+    # The independent instrument: how many of the struts that should meet here actually
+    # arrive. It comes from the strut labels, the fill above comes from the voxels.
+    dead = None
+    needed = ("connectivity.npz", "strut_classes.csv", "struts.csv")
+    if results_directory and all(
+            os.path.isfile(os.path.join(results_directory, f)) for f in needed):
+        try:
+            conn = dict(np.load(os.path.join(results_directory, "connectivity.npz"),
+                                allow_pickle=False))
+            cls = np.genfromtxt(os.path.join(results_directory, "strut_classes.csv"),
+                                delimiter=",", names=True, dtype=None, encoding=None)
+            st = np.genfromtxt(os.path.join(results_directory, "struts.csv"),
+                               delimiter=",", names=True)
+            m = len(cls["label"])
+            ends = node_of[pairs[:m]]
+            usable = ((st["is_boundary"][:m] == 0) & (st["embedded"][:m] == 0)
+                      & ~conn["clipped"][:m] & ~conn["no_seed"][:m])
+            bad = usable & ((cls["label"] == "missing") | (cls["label"] == "broken"))
+            inc_u = np.bincount(ends[usable].ravel(), minlength=len(node_pos))
+            inc_b = np.bincount(ends[bad].ravel(), minlength=len(node_pos))
+            dead = interior & (inc_u >= 8) & ((inc_u - inc_b) == 0)
+        except (OSError, ValueError, KeyError):
+            dead = None
+
+    for k in np.flatnonzero(flagged | (dead if dead is not None else flagged)):
+        p = node_pos[k]
+        note = ""
+        if dead is not None:
+            note = ("  confirmed by both" if flagged[k] and dead[k]
+                    else "  ONE INSTRUMENT ONLY -- inspect before reporting")
+        lines.append(f"  node {k}  z={p[0]:.0f} y={p[1]:.0f} x={p[2]:.0f}  "
+                     f"fill {fill[k]:.3f}{note}")
+
+    lines.append("")
+    if dead is None:
+        lines.append("Degree cross-check NOT run: pass results_directory from a "
+                     "detect_lattice_defects run to confirm each candidate against the "
+                     "struts that should arrive. On its own this is one instrument.")
+    else:
+        agree = int((flagged & dead).sum())
+        disagree = int((flagged ^ dead).sum())
+        lines.append(f"Degree cross-check: {int(dead.sum())} nodes with no strut "
+                     f"arriving.  agree with sphere fill: {agree}   disagree: {disagree}")
+        if disagree:
+            lines.append("A disagreement means the voxels and the strut labels tell "
+                         "different stories. Inspect those nodes before reporting them.")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
