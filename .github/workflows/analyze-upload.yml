@@ -1,0 +1,105 @@
+name: Analyze an uploaded CT scan (Codex)
+
+# Triggered by the Cloudflare Worker proxy (platform/cloudflare-worker/) right after it
+# pushes a dashboard-submitted file to a fresh branch. This job never touches main
+# directly: Codex does the analysis on that branch and this workflow opens a PR, so a
+# person reviews and merges before anything reaches the public Pages gallery.
+on:
+  repository_dispatch:
+    types: [analyze-upload]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: analyze-upload-${{ github.event.client_payload.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout upload branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.branch }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Install everything BEFORE the Codex step: its default sandbox
+      # (workspace-write) disables network access, so pip installs have to
+      # happen out here, not inside the agent's own steps.
+      - name: Install project dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r platform/requirements.txt
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: workspace-write
+          prompt: |
+            A new CT scan was just uploaded to this branch through the project's public
+            dashboard, for on-demand defect analysis. Follow the conventions in AGENTS.md
+            at the repository root -- in particular: src/mcp_server.py is the tool set to
+            use (import it, call its functions directly), and NEVER report a defect count
+            from detect_lattice_defects / measure_lattice_iou / detect_missing_nodes
+            without first running refit_lattice_registration and passing its
+            correction.json through.
+
+            Uploaded scan:      ${{ github.event.client_payload.tiff_path }}
+            Design graph:       ${{ github.event.client_payload.design_path || 'none provided' }}
+            Threshold hint:     ${{ github.event.client_payload.threshold || 'not given -- inspect the histogram and pick one, state it in the report' }}
+            Write everything under: outputs/uploads/${{ github.event.client_payload.request_id }}/
+
+            Do, in order, writing all outputs into that directory:
+            1. Segment the scan (segment_ct_dataset) and save 2-3 sanity-check slice
+               visualizations (visualize_slice) so a reviewer can see the mask is sane
+               before trusting anything downstream.
+            2. Skeletonize the segmentation (skeletonize).
+            3. Always run detect_missing_nodes_2d -- it needs no design file or
+               registration, so it works regardless of what was uploaded, and is a useful
+               cross-check even when a design graph IS available.
+            4. If (and only if) a design graph was provided: run
+               refit_lattice_registration FIRST, then measure_lattice_iou,
+               detect_lattice_defects, and detect_missing_nodes, all using the
+               correction.json the refit step produced. If no design graph was provided,
+               say so plainly in the report instead of guessing at one.
+            5. Write outputs/uploads/${{ github.event.client_payload.request_id }}/REPORT.md:
+               what you ran, the key numbers, and the caveats (registration applied or
+               not; resolution limits; anything the tool output flagged as uncertain).
+               Match the tone of the repo's own FINDINGS.md / FINAL_README.md -- state
+               numbers WITH their caveats, never as bare facts.
+            6. git add and git commit everything you wrote under
+               outputs/uploads/${{ github.event.client_payload.request_id }}/ with a clear
+               message. Do not modify or commit anything outside that directory.
+
+      - name: Push branch
+        run: git push origin "HEAD:${{ github.event.client_payload.branch }}"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEX_SUMMARY: ${{ steps.run_codex.outputs.final-message }}
+        run: |
+          gh pr create \
+            --title "Analysis: ${{ github.event.client_payload.tiff_path }}" \
+            --base main \
+            --head "${{ github.event.client_payload.branch }}" \
+            --body "Automated analysis, submitted through the public dashboard and run by Codex (see \`.github/workflows/analyze-upload.yml\`).
+
+          Results: \`outputs/uploads/${{ github.event.client_payload.request_id }}/REPORT.md\`
+
+          ---
+
+          **Codex summary:**
+
+          $CODEX_SUMMARY" \
+            || echo "A PR for this branch may already exist -- check the repo's Pull requests tab."

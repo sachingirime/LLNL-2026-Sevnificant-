@@ -1,32 +1,46 @@
 # Lattice NDE Platform
 
-Two ways to see this project's analysis pipeline, sharing one set of tools:
+Three ways to see this project's analysis pipeline, all sharing the same tools
+(`src/mcp_server.py`) so results are identical no matter which path produced them:
 
-1. **A public, static results gallery on GitHub Pages** -- rebuilt automatically by
-   `.github/workflows/deploy-pages.yml` every time `outputs/` changes on `main`. No
-   server, no login: just a live page of whatever's already been computed. See
-   `AGENTS.md` at the repo root for how Codex (CLI or Cloud) runs the pipeline and
-   publishes results here -- that's the intended way to generate new analyses now,
-   rather than clicking through a local dashboard.
-2. **An optional local, interactive dashboard** (below) with live forms and a job
-   runner, for running tools by hand instead of through Codex.
+1. **A public dashboard on GitHub Pages** that anyone with the link can open, browse
+   already-computed results on, and submit a new CT scan to for analysis. Submitting
+   doesn't run anything on GitHub Pages itself (it can't -- static hosting only); it
+   pushes the scan to the repo and asks **Codex** to run the pipeline against it,
+   headlessly, via GitHub Actions. Results land in a pull request for review before
+   they reach the public page. This is the intended day-to-day way to use the project
+   now, from a phone or a laptop, no local setup.
+2. **Codex CLI/Cloud directly** against the repo, for anyone comfortable with that --
+   see `AGENTS.md` at the repo root.
+3. **An optional local, interactive dashboard** (further down) with live forms and a
+   job runner, for running tools by hand on your own machine instead of through Codex.
 
-Neither reimplements any analysis. Both call `src/mcp_server.py` directly -- the exact
-same functions Codex calls as MCP tools -- so results are identical everywhere.
+## The public dashboard (GitHub Pages + Cloudflare Worker + GitHub Actions)
 
-## The static gallery (GitHub Pages)
+Three pieces, only one of which needs your own setup:
 
-`platform/build_static_site.py` scans `outputs/` and the project's `*.md` reports and
-turns them into a self-contained static site (`gallery.json` + `tools.json` + a `files/`
-mirror), using only the standard library -- no scientific dependencies needed just to
-publish PNGs and CSVs. The GitHub Actions workflow calls it on every push to `main` and
-publishes the result with `actions/upload-pages-artifact` + `actions/deploy-pages`.
+- `platform/frontend/static_index.html` -- the page itself. Built by
+  `platform/build_static_site.py`, which scans `outputs/` and the project's `*.md`
+  reports into a static `gallery.json` + `tools.json` + `files/` mirror, no scientific
+  dependencies required. `.github/workflows/deploy-pages.yml` rebuilds and republishes
+  it on every push to `main` that touches `outputs/`.
+- `platform/cloudflare-worker/` -- the upload proxy. GitHub Pages can't accept a file
+  upload or hold a credential, so this small Worker does both: it takes the upload,
+  pushes it to a new branch, and fires the event that starts the analysis. **This is
+  the one piece you need to deploy yourself** -- it needs your own GitHub token and
+  Cloudflare account; see `platform/cloudflare-worker/README.md` for the ~5 minute
+  setup, and the `OPENAI_API_KEY` repo secret it depends on.
+- `.github/workflows/analyze-upload.yml` -- runs when the Worker fires its event.
+  Checks out the upload branch and runs Codex headlessly (`openai/codex-action`)
+  against it per `AGENTS.md`'s "on-demand analysis" section, then opens a PR instead
+  of pushing to `main` directly.
 
-One-time setup on GitHub: repo Settings -> Pages -> Source -> **GitHub Actions**. After
-that, merging any branch that touches `outputs/` into `main` republishes the page within
-a minute or two -- no manual step.
+One-time setup on GitHub for the page itself (independent of the Worker): repo
+Settings -> Pages -> Source -> **GitHub Actions**. After that, merging anything that
+touches `outputs/` into `main` republishes the page within a minute or two.
 
-To preview it locally before pushing:
+To preview the static page locally before pushing (gallery browsing only -- the upload
+form still needs the deployed Worker to actually do anything):
 
 ```bash
 python platform/build_static_site.py --out platform/_site
@@ -34,8 +48,6 @@ python -m http.server 8080 --directory platform/_site   # open http://localhost:
 ```
 
 ## The local interactive dashboard (optional)
-
-## Start it
 
 ```bash
 cd platform

@@ -58,22 +58,39 @@
   .btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;
        font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;}
   .btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text);}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
   a{color:var(--accent2);}
   iframe.preview{width:100%;height:520px;border:1px solid var(--border);border-radius:10px;background:#fff;}
   footer{color:var(--muted);font-size:11.5px;margin-top:40px;text-align:center;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px;}
+  .field label b{color:var(--text);font-weight:600;}
+  .field input[type=file],.field input[type=text],.field input[type=number]{
+    width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+    border-radius:8px;padding:9px 11px;font-size:13px;font-family:var(--mono);}
+  .field .helptext{color:var(--muted);font-size:11.5px;margin-top:4px;}
+  .status-line{display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0;}
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:0 0 auto;}
+  .status-dot.busy{background:#f0b93b;}
+  .status-dot.ok{background:var(--ok);}
+  .status-dot.err{background:#f2607a;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Lattice NDE Platform</h1>
-  <div class="sub">X-ray CT lattice inspection &mdash; a static snapshot of everything computed so far.</div>
+  <div class="sub">X-ray CT lattice inspection &mdash; submit a scan, or browse everything computed so far.</div>
   <div class="banner">
-    <b>This page is read-only.</b> It's rebuilt automatically from <code>outputs/</code> every time
-    something is pushed to <code>main</code>. New analyses run through Codex (CLI or Cloud) against
-    this repository &mdash; see <code>AGENTS.md</code> at the repo root for how an agent runs the
-    pipeline and publishes results here. There is no server behind this page.
+    Submitting a scan below pushes it to the project's GitHub repo and asks
+    <b>Codex</b> to run the full segment &rarr; register &rarr; classify-defects pipeline
+    against it (see <code>AGENTS.md</code>), the same way it would if you asked it
+    yourself. Results land in a pull request for review, not published automatically
+    &mdash; once merged, this page rebuilds and picks them up within a minute or two.
+    This page itself is static; the one thing that isn't is the small upload proxy
+    described in <code>platform/cloudflare-worker/README.md</code>.
   </div>
 
+  <div id="analyze"></div>
   <div id="reports"></div>
   <div id="gallery"></div>
   <div id="pipeline"></div>
@@ -83,6 +100,15 @@
 <div id="modal-root"></div>
 
 <script>
+// --- Config -----------------------------------------------------------------
+// Set this once you've deployed platform/cloudflare-worker/ (see its README).
+// Left blank, the "Analyze a new scan" form still renders but explains what's
+// missing instead of trying (and failing) to submit.
+const UPLOAD_PROXY_URL = ""; // e.g. "https://lattice-nde-upload-proxy.you.workers.dev/submit"
+const GITHUB_OWNER = "sachingirime";
+const GITHUB_REPO = "LLNL-2026-Sevnificant-";
+const MAX_UPLOAD_MB = 45; // must match MAX_TOTAL_BYTES in the Worker
+
 function el(tag, attrs={}, children=[]){
   const e = document.createElement(tag);
   for(const [k,v] of Object.entries(attrs)){
@@ -157,7 +183,136 @@ function openPreview(item){
   renderPreviewInto(body, item);
 }
 
+// --- Submit a new scan + track it through to a merged PR --------------------
+function renderAnalyze(){
+  const root = document.getElementById("analyze");
+  root.append(el("h2",{},"Analyze a new scan"));
+
+  if(!UPLOAD_PROXY_URL){
+    root.append(el("div",{class:"card"},[
+      el("div",{class:"sub"},"Upload isn't wired up yet."),
+      "The proxy that accepts uploads (",
+      el("code",{},"platform/cloudflare-worker/"),
+      ") hasn't been deployed, or ",
+      el("code",{},"UPLOAD_PROXY_URL"),
+      " in this page hasn't been pointed at it yet. See that folder's README for the ~5 minute setup.",
+    ]));
+    return;
+  }
+
+  const card = el("div",{class:"card"});
+  const tiffInput = el("input",{type:"file",accept:".tif,.tiff"});
+  const designInput = el("input",{type:"file",accept:".json"});
+  const thresholdInput = el("input",{type:"number",step:"any",placeholder:"e.g. 0.5 (optional -- Codex will pick one and explain why if left blank)"});
+  const submitBtn = el("button",{class:"btn"}, "Submit for analysis");
+  const statusBox = el("div",{});
+
+  card.append(
+    el("div",{class:"field"},[el("label",{},[el("b",{},"CT scan"), " (.tif/.tiff, required, up to "+MAX_UPLOAD_MB+" MB)"]), tiffInput]),
+    el("div",{class:"field"},[el("label",{},[el("b",{},"Design graph"), " (.json, optional -- enables full registration + defect classification instead of the design-free check only)"]), designInput]),
+    el("div",{class:"field"},[el("label",{},[el("b",{},"Segmentation threshold"), " (optional)"]), thresholdInput]),
+    submitBtn,
+    statusBox,
+  );
+  root.append(card);
+
+  submitBtn.addEventListener("click", async ()=>{
+    statusBox.innerHTML = "";
+    const tiff = tiffInput.files[0];
+    if(!tiff){
+      statusBox.append(statusLine("err","Choose a .tif/.tiff file first."));
+      return;
+    }
+    if(tiff.size > MAX_UPLOAD_MB * 1e6){
+      statusBox.append(statusLine("err",
+        `That file is ${(tiff.size/1e6).toFixed(1)} MB, over the ${MAX_UPLOAD_MB} MB limit. `
+        +"See platform/cloudflare-worker/README.md for options for larger scans."));
+      return;
+    }
+
+    submitBtn.disabled = true; submitBtn.textContent = "Uploading…";
+    statusBox.innerHTML = "";
+    statusBox.append(statusLine("busy","Uploading and pushing to a new branch…"));
+
+    const fd = new FormData();
+    fd.append("tiff", tiff);
+    if(designInput.files[0]) fd.append("design", designInput.files[0]);
+    if(thresholdInput.value) fd.append("threshold", thresholdInput.value);
+
+    try{
+      const res = await fetch(UPLOAD_PROXY_URL, {method:"POST", body:fd});
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+      statusBox.innerHTML = "";
+      statusBox.append(statusLine("busy", `Submitted as branch ${data.branch}. Codex is running the pipeline…`));
+      statusBox.append(el("div",{class:"field helptext"},[
+        "Following along: ",
+        el("a",{href:`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/pulls?q=is%3Apr+head%3A${encodeURIComponent(data.branch)}`,target:"_blank"},"open PRs for this branch"),
+        " · ",
+        el("a",{href:`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions`,target:"_blank"},"Actions tab"),
+      ]));
+      pollForPR(data.branch, statusBox);
+    } catch(err){
+      statusBox.innerHTML = "";
+      statusBox.append(statusLine("err","Submission failed: "+err.message));
+    } finally {
+      submitBtn.disabled = false; submitBtn.textContent = "Submit for analysis";
+    }
+  });
+}
+
+function statusLine(kind, text){
+  return el("div",{class:"status-line"},[el("span",{class:"status-dot "+kind}), text]);
+}
+
+async function pollForPR(branch, statusBox){
+  const start = Date.now();
+  const maxMs = 20 * 60 * 1000; // ~20 min, generous for a cold ~10-minute defect-classification run
+  const tick = async ()=>{
+    let data;
+    try{
+      const r = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/pulls?head=${GITHUB_OWNER}:${encodeURIComponent(branch)}&state=all`);
+      if(r.status === 403){
+        appendStatus(statusBox, statusLine("err","GitHub's public API rate-limited this browser. Use the links above to check manually."));
+        return;
+      }
+      data = await r.json();
+    } catch {
+      // Transient network hiccup -- just retry on the next tick.
+      data = null;
+    }
+    if(Array.isArray(data) && data.length){
+      const pr = data[0];
+      if(pr.state === "open"){
+        appendStatus(statusBox, statusLine("ok", `Analysis complete -- `), [
+          el("a",{href:pr.html_url,target:"_blank"}, `PR #${pr.number} is open for review`),
+        ]);
+        return;
+      }
+      if(pr.merged_at){
+        appendStatus(statusBox, statusLine("ok", "Merged -- refresh this page in a minute or two once GitHub Pages rebuilds."));
+        return;
+      }
+      appendStatus(statusBox, statusLine("err", "The PR was closed without merging -- check it for why."), [
+        el("a",{href:pr.html_url,target:"_blank"},"view PR"),
+      ]);
+      return;
+    }
+    if(Date.now() - start > maxMs){
+      appendStatus(statusBox, statusLine("err","Still not done after 20 minutes -- check the Actions tab linked above; something may have failed."));
+      return;
+    }
+    setTimeout(tick, 15000);
+  };
+  setTimeout(tick, 8000);
+}
+
+function appendStatus(box, ...nodes){
+  box.append(el("div",{}, nodes.flat()));
+}
+
 (async function boot(){
+  renderAnalyze();
   const [gallery, tools] = await Promise.all([
     jget("gallery.json").catch(()=>({groups:[],reports:[]})),
     jget("tools.json").catch(()=>[]),

@@ -72,3 +72,33 @@ in).
 There's also an optional local, interactive version of this dashboard --
 `platform/README.md` -- with live forms and a job runner over these same tools, for
 running things by hand outside of Codex.
+
+## On-demand analysis triggered from the public dashboard
+
+The dashboard published to GitHub Pages (`platform/frontend/static_index.html`) lets a
+visitor upload a new scan. That flow is: the dashboard's Cloudflare Worker
+(`platform/cloudflare-worker/`) pushes the upload to a fresh branch named
+`upload/<request_id>` under `uploads/incoming/<request_id>/`, then fires a
+`repository_dispatch` event that runs `.github/workflows/analyze-upload.yml` --
+which is the one place Codex is invoked non-interactively (`openai/codex-action`) rather
+than through a person typing a prompt. If you're the agent running inside that
+workflow, here is what's expected of you, precisely:
+
+- **Inputs**: `github.event.client_payload` gives you `tiff_path`, `design_path`
+  (may be absent), `threshold` (may be absent), and `request_id`.
+- **Output location**: everything you write goes under
+  `outputs/uploads/<request_id>/`, nowhere else. Do not touch any other file.
+- **Always run**, regardless of whether a design graph was supplied:
+  segment -> a couple of sanity-check slice visualizations -> skeletonize ->
+  `detect_missing_nodes_2d` (it needs no design file, so it's your baseline
+  defect screen for every submission).
+- **Only if a design graph was supplied**: run `refit_lattice_registration` first,
+  then `measure_lattice_iou`, `detect_lattice_defects`, and `detect_missing_nodes`,
+  passing the fresh `correction.json` through to each. If no design graph came in,
+  say so in the report rather than fabricating a registration.
+- **Write `REPORT.md`** in that same output directory, in the tone of `FINDINGS.md` /
+  `FINAL_README.md` -- numbers with their caveats, not bare claims.
+- **Commit only `outputs/uploads/<request_id>/`** and let the workflow push the
+  branch and open the PR -- do not push directly to `main` yourself from this path.
+  This is deliberate: an anonymous public upload should never publish straight to
+  the results page without a person reviewing the PR first.

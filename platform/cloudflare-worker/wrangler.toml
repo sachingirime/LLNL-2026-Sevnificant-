@@ -1,0 +1,12 @@
+name = "lattice-nde-upload-proxy"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Non-secret config -- fine to commit. Change these to your fork/repo.
+[vars]
+GITHUB_OWNER = "sachingirime"
+GITHUB_REPO = "LLNL-2026-Sevnificant-"
+BASE_BRANCH = "main"
+
+# GITHUB_TOKEN is a SECRET, not set here -- see README.md.
+# Set it with: wrangler secret put GITHUB_TOKEN
