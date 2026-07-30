@@ -1,0 +1,59 @@
+name: Deploy results to GitHub Pages
+
+# Rebuilds and republishes the static results gallery (platform/build_static_site.py)
+# whenever outputs/ or a report changes on main -- this is the "page updates itself"
+# half of the Codex Cloud workflow: a Codex task runs the pipeline, commits new
+# files under outputs/, and this workflow takes it from there.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "outputs/**"
+      - "*.md"
+      - "platform/build_static_site.py"
+      - "platform/frontend/static_index.html"
+      - "platform/backend/tool_specs.py"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # No LFS checkout needed here -- this job only publishes files already
+        # under outputs/ and *.md, never the raw CT/STL data.
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build static site
+        run: python platform/build_static_site.py --out _site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

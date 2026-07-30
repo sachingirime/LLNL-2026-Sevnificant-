@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lattice NDE Platform</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1c2540; --border:#2a3455;
+    --text:#e8ecf7; --muted:#8b95b8; --accent:#4f8cff; --accent2:#38d0c8;
+    --ok:#3ecf8e; --warn:#f0b93b; --err:#f2607a; --mono:'SFMono-Regular',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       background:var(--bg);color:var(--text);}
+  .app{display:flex;min-height:100vh;}
+  .sidebar{width:270px;flex:0 0 270px;background:var(--panel);border-right:1px solid var(--border);
+           padding:18px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;}
+  .brand{font-weight:700;font-size:15px;letter-spacing:.3px;margin-bottom:2px;}
+  .brand small{display:block;font-weight:400;color:var(--muted);font-size:11.5px;margin-top:2px;}
+  .nav-group{margin-top:18px;}
+  .nav-group h4{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+                margin:0 0 6px 6px;font-weight:600;}
+  .nav-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;
+            font-size:13.5px;color:var(--text);}
+  .nav-item:hover{background:var(--panel2);}
+  .nav-item.active{background:var(--accent);color:#fff;}
+  .nav-item .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex:0 0 auto;}
+  .main{flex:1;padding:26px 34px;max-width:1180px;}
+  h1{font-size:22px;margin:0 0 4px;}
+  h2{font-size:16px;margin:26px 0 10px;color:var(--text);}
+  .sub{color:var(--muted);font-size:13.5px;margin-bottom:20px;}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px;
+        margin-bottom:16px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;}
+  .thumb{background:var(--panel2);border:1px solid var(--border);border-radius:10px;overflow:hidden;
+         cursor:pointer;transition:transform .1s;}
+  .thumb:hover{border-color:var(--accent);}
+  .thumb img{width:100%;height:130px;object-fit:cover;display:block;background:#0a0e18;}
+  .thumb .cap{padding:8px 10px;font-size:11.5px;color:var(--muted);word-break:break-all;}
+  .file-pill{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--panel2);
+             border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;margin-bottom:6px;}
+  .file-pill:hover{border-color:var(--accent);}
+  .badge{font-size:10.5px;padding:2px 7px;border-radius:20px;background:var(--border);color:var(--muted);
+         text-transform:uppercase;letter-spacing:.04em;}
+  .tool-form label{display:block;font-size:12.5px;color:var(--muted);margin:12px 0 4px;}
+  .tool-form label b{color:var(--text);font-weight:600;}
+  .field-row{display:flex;gap:6px;}
+  input[type=text],input[type=number]{flex:1;background:var(--bg);border:1px solid var(--border);
+        color:var(--text);border-radius:8px;padding:9px 11px;font-size:13px;font-family:var(--mono);}
+  input:focus{outline:none;border-color:var(--accent);}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px 16px;
+       font-size:13.5px;font-weight:600;cursor:pointer;}
+  .btn:hover{opacity:.9;}
+  .btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text);}
+  .btn.small{padding:6px 10px;font-size:12px;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .helptext{color:var(--muted);font-size:11.5px;margin-top:3px;}
+  .status{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 10px;border-radius:20px;}
+  .status.queued{background:#3a3f57;color:var(--muted);}
+  .status.running{background:#3a3f00;color:var(--warn);}
+  .status.done{background:#0e3a2c;color:var(--ok);}
+  .status.error{background:#3a1420;color:var(--err);}
+  pre.result{background:#0a0e18;border:1px solid var(--border);border-radius:10px;padding:14px 16px;
+             font-family:var(--mono);font-size:12.3px;white-space:pre-wrap;word-break:break-word;
+             max-height:420px;overflow:auto;}
+  table.csv{border-collapse:collapse;font-size:12px;width:100%;}
+  table.csv td,table.csv th{border:1px solid var(--border);padding:4px 8px;text-align:left;white-space:nowrap;}
+  table.csv th{background:var(--panel2);position:sticky;top:0;}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;
+            justify-content:center;z-index:50;}
+  .modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;width:560px;
+         max-height:70vh;display:flex;flex-direction:column;}
+  .modal-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
+  .modal-body{overflow-y:auto;padding:10px 8px;}
+  .crumb{color:var(--muted);font-size:12px;padding:4px 14px 10px;}
+  .browse-row{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;cursor:pointer;font-size:13px;}
+  .browse-row:hover{background:var(--panel2);}
+  .stage-summary{color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.5;}
+  a{color:var(--accent2);}
+  .job-row{display:flex;justify-content:space-between;align-items:center;padding:9px 4px;border-bottom:1px solid var(--border);font-size:12.8px;}
+  .job-row:last-child{border-bottom:none;}
+  iframe.preview{width:100%;height:520px;border:1px solid var(--border);border-radius:10px;background:#fff;}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="brand">Lattice NDE Platform<small>x-ray CT lattice inspection, one dashboard</small></div>
+    <div class="nav-group">
+      <h4>Overview</h4>
+      <div class="nav-item" data-view="dashboard"><span class="dot"></span>Dashboard</div>
+      <div class="nav-item" data-view="browse"><span class="dot"></span>File browser</div>
+      <div class="nav-item" data-view="jobs"><span class="dot"></span>Jobs</div>
+    </div>
+    <div id="tool-nav"></div>
+  </div>
+  <div class="main" id="main"></div>
+</div>
+
+<div id="modal-root"></div>
+
+<script>
+const API = "";
+let TOOLS = [];
+let GALLERY = null;
+let currentView = "dashboard";
+let jobPollTimer = null;
+
+async function jget(url){ const r = await fetch(API+url); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+async function jpost(url, body){ const r = await fetch(API+url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+
+function el(tag, attrs={}, children=[]){
+  const e = document.createElement(tag);
+  for(const [k,v] of Object.entries(attrs)){
+    if(k==="class") e.className=v;
+    else if(k==="html") e.innerHTML=v;
+    else if(k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k,v);
+  }
+  for(const c of [].concat(children)) if(c!=null) e.append(c.nodeType?c:document.createTextNode(c));
+  return e;
+}
+
+// ---------------------------------------------------------------- sidebar --
+function renderNav(){
+  const nav = document.getElementById("tool-nav");
+  nav.innerHTML = "";
+  const stages = {};
+  for(const t of TOOLS){ (stages[t.stage] ||= []).push(t); }
+  const group = el("div", {class:"nav-group"}, [el("h4",{},"Pipeline")]);
+  nav.append(group);
+  for(const [stage, tools] of Object.entries(stages)){
+    const g = el("div", {class:"nav-group"}, [el("h4",{},stage)]);
+    for(const t of tools){
+      g.append(el("div",{class:"nav-item",dataset:"", "data-view":"tool:"+t.name,
+        onclick:()=>setView("tool:"+t.name)},[el("span",{class:"dot"}), t.name]));
+    }
+    nav.append(g);
+  }
+  document.querySelectorAll(".nav-item[data-view]").forEach(n=>{
+    n.addEventListener("click", ()=> setView(n.getAttribute("data-view")));
+  });
+}
+
+function markActive(view){
+  document.querySelectorAll(".nav-item").forEach(n=>n.classList.remove("active"));
+  document.querySelectorAll(`.nav-item[data-view="${view}"]`).forEach(n=>n.classList.add("active"));
+}
+
+function setView(view){
+  currentView = view;
+  markActive(view);
+  if(view==="dashboard") renderDashboard();
+  else if(view==="browse") renderBrowsePage();
+  else if(view==="jobs") renderJobsPage();
+  else if(view.startsWith("tool:")) renderToolPage(view.slice(5));
+}
+
+// --------------------------------------------------------------- dashboard --
+function kindIcon(kind){
+  return {image:"🖼", csv:"📊", json:"🧾", markdown:"📝", html:"🌐", text:"📄", docx:"📘"}[kind] || "📄";
+}
+
+function fileUrl(path){ return API+"/api/file?path="+encodeURIComponent(path); }
+
+async function renderDashboard(){
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  main.append(el("h1",{},"Dashboard"));
+  main.append(el("div",{class:"sub"},
+    "Everything already computed in this project, plus live access to every analysis tool in src/mcp_server.py. Pick a pipeline stage on the left to run something new."));
+
+  if(!GALLERY) GALLERY = await jget("/api/gallery");
+
+  if(GALLERY.reports.length){
+    main.append(el("h2",{},"Reports"));
+    const wrap = el("div",{class:"card"});
+    for(const r of GALLERY.reports){
+      wrap.append(el("div",{class:"file-pill", onclick:()=>openPreview(r)},
+        [kindIcon(r.kind)+"  "+r.name, el("span",{class:"badge"},r.kind)]));
+    }
+    main.append(wrap);
+  }
+
+  main.append(el("h2",{},`Computed outputs (${GALLERY.groups.length} folders)`));
+  for(const g of GALLERY.groups){
+    const card = el("card",{});
+  }
+  for(const g of GALLERY.groups){
+    const section = el("div",{class:"card"});
+    section.append(el("div",{style:"font-family:var(--mono);font-size:12.5px;color:var(--muted);margin-bottom:10px;"}, g.dir));
+    const grid = el("div",{class:"grid"});
+    for(const it of g.items){
+      if(it.kind==="image"){
+        grid.append(el("div",{class:"thumb",onclick:()=>openPreview(it)},[
+          el("img",{src:fileUrl(it.path),loading:"lazy"}),
+          el("div",{class:"cap"}, it.name),
+        ]));
+      } else {
+        grid.append(el("div",{class:"thumb",onclick:()=>openPreview(it),style:"padding:14px;"},[
+          el("div",{style:"font-size:26px;"}, kindIcon(it.kind)),
+          el("div",{class:"cap"}, it.name),
+        ]));
+      }
+    }
+    section.append(grid);
+    main.append(section);
+  }
+  if(GALLERY.groups.length===0){
+    main.append(el("div",{class:"card"},"No outputs/ folder found yet -- run a tool from the pipeline on the left to generate results."));
+  }
+}
+
+function openPreview(item){
+  const root = document.getElementById("modal-root");
+  root.innerHTML = "";
+  const bg = el("div",{class:"modal-bg",onclick:(e)=>{if(e.target===bg) root.innerHTML="";}});
+  const modal = el("div",{class:"modal",style:"width:min(880px,92vw);max-height:88vh;"});
+  modal.append(el("div",{class:"modal-head"},[el("b",{},item.name),
+    el("div",{},[el("a",{href:fileUrl(item.path),target:"_blank",class:"btn small ghost",style:"margin-right:8px;text-decoration:none;"},"Open raw"),
+      el("button",{class:"btn small",onclick:()=>root.innerHTML=""},"Close")])]));
+  const body = el("div",{class:"modal-body",style:"padding:16px;"});
+  modal.append(body);
+  bg.append(modal); root.append(bg);
+  renderPreviewInto(body, item);
+}
+
+async function renderPreviewInto(container, item){
+  container.innerHTML = "Loading…";
+  try{
+    if(item.kind==="image"){
+      container.innerHTML="";
+      container.append(el("img",{src:fileUrl(item.path),style:"max-width:100%;border-radius:8px;"}));
+    } else if(item.kind==="html"){
+      container.innerHTML="";
+      container.append(el("iframe",{class:"preview",src:fileUrl(item.path)}));
+    } else if(item.kind==="csv"){
+      const txt = await (await fetch(fileUrl(item.path))).text();
+      container.innerHTML="";
+      container.append(renderCsvTable(txt));
+    } else if(item.kind==="docx"){
+      container.innerHTML = `<div class="helptext">Binary Word document -- open it from the project folder directly (${item.path}). Preview isn't rendered in-browser.</div>`;
+    } else {
+      const txt = await (await fetch(fileUrl(item.path))).text();
+      container.innerHTML="";
+      if(item.kind==="json"){
+        try{ container.append(el("pre",{class:"result"}, JSON.stringify(JSON.parse(txt), null, 2))); }
+        catch{ container.append(el("pre",{class:"result"}, txt)); }
+      } else {
+        container.append(el("pre",{class:"result"}, txt));
+      }
+    }
+  } catch(err){
+    container.innerHTML = "";
+    container.append(el("pre",{class:"result"}, "Could not load preview: "+err.message));
+  }
+}
+
+function renderCsvTable(txt){
+  const lines = txt.trim().split(/\r?\n/).slice(0,300);
+  const table = el("table",{class:"csv"});
+  lines.forEach((line,i)=>{
+    const cells = line.split(",");
+    const row = el(i===0?"tr":"tr",{});
+    cells.forEach(c=> row.append(el(i===0?"th":"td",{}, c)));
+    table.append(row);
+  });
+  if(txt.trim().split(/\r?\n/).length>300) table.append(el("caption",{style:"caption-side:bottom;color:var(--muted);font-size:11px;padding-top:6px;"},"(truncated to 300 rows)"));
+  return table;
+}
+
+// --------------------------------------------------------------- browser --
+async function renderBrowsePage(){
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  main.append(el("h1",{},"File browser"));
+  main.append(el("div",{class:"sub"},"Browse everything under the project root. Click a file to preview it, a folder to open it."));
+  const card = el("div",{class:"card"});
+  main.append(card);
+  await loadBrowseInto(card, "");
+}
+
+async function loadBrowseInto(card, path){
+  card.innerHTML = "Loading…";
+  const data = await jget("/api/browse?path="+encodeURIComponent(path));
+  card.innerHTML = "";
+  card.append(el("div",{class:"crumb"}, "/"+data.cwd));
+  if(data.parent!==null){
+    card.append(el("div",{class:"browse-row",onclick:()=>loadBrowseInto(card,data.parent)},["⬆️  .."]));
+  }
+  for(const e of data.entries){
+    if(e.is_dir){
+      card.append(el("div",{class:"browse-row",onclick:()=>loadBrowseInto(card,e.path)},["📁  "+e.name]));
+    } else {
+      const kind = ({".png":"image",".jpg":"image",".jpeg":"image",".gif":"image",".csv":"csv",
+                      ".json":"json",".md":"markdown",".html":"html",".txt":"text"})[e.ext] || "text";
+      card.append(el("div",{class:"browse-row",onclick:()=>openPreview({name:e.name,path:e.path,kind})},
+        [kindIcon(kind)+"  "+e.name]));
+    }
+  }
+  if(data.entries.length===0 && data.parent===null){
+    card.append(el("div",{class:"helptext"},"Empty."));
+  }
+}
+
+// ----------------------------------------------------------------- jobs --
+async function renderJobsPage(){
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  main.append(el("h1",{},"Jobs"));
+  main.append(el("div",{class:"sub"},"Every tool run in this session, most recent first."));
+  const card = el("div",{class:"card"});
+  main.append(card);
+  await refreshJobsInto(card);
+  clearInterval(jobPollTimer);
+  jobPollTimer = setInterval(()=>{ if(currentView==="jobs") refreshJobsInto(card); }, 2000);
+}
+
+async function refreshJobsInto(card){
+  const jobs = await jget("/api/jobs");
+  card.innerHTML = "";
+  if(jobs.length===0){ card.append(el("div",{class:"helptext"},"No jobs yet.")); return; }
+  for(const j of jobs){
+    const row = el("div",{class:"job-row"});
+    row.append(el("div",{},[el("b",{},j.tool), el("span",{style:"color:var(--muted);margin-left:8px;"}, j.id)]));
+    row.append(el("div",{},[el("span",{class:"status "+j.status}, j.status),
+      el("button",{class:"btn small ghost",style:"margin-left:10px;",onclick:()=>showJobResult(j)},"View")]));
+    card.append(row);
+  }
+}
+
+function showJobResult(job){
+  const root = document.getElementById("modal-root");
+  root.innerHTML = "";
+  const bg = el("div",{class:"modal-bg",onclick:(e)=>{if(e.target===bg) root.innerHTML="";}});
+  const modal = el("div",{class:"modal",style:"width:min(760px,92vw);max-height:85vh;"});
+  modal.append(el("div",{class:"modal-head"},[el("b",{}, job.tool+"  ("+job.id+")"),
+    el("button",{class:"btn small",onclick:()=>root.innerHTML=""},"Close")]));
+  const body = el("div",{class:"modal-body",style:"padding:16px;"});
+  body.append(el("div",{style:"margin-bottom:10px;"},[el("span",{class:"status "+job.status}, job.status)]));
+  body.append(el("pre",{class:"result"}, job.result || job.error || "(no output yet)"));
+  modal.append(body);
+  bg.append(modal); root.append(bg);
+}
+
+// ------------------------------------------------------------- tool page --
+function renderToolPage(name){
+  const spec = TOOLS.find(t=>t.name===name);
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  main.append(el("h1",{}, spec.name));
+  main.append(el("div",{class:"stage-summary"}, spec.summary));
+
+  const form = el("div",{class:"card tool-form"});
+  const inputs = {};
+  for(const f of spec.fields){
+    form.append(el("label",{}, [el("b",{}, f.name), f.required? " (required)" : " (optional)"]));
+    if(f.type==="bool"){
+      const cb = el("input",{type:"checkbox"});
+      cb.checked = !!f.default;
+      inputs[f.name] = {el: cb, type: f.type};
+      form.append(cb);
+    } else if(f.type==="path"){
+      const inp = el("input",{type:"text",placeholder:f.help||"", value: f.default!=null?String(f.default):""});
+      const browseBtn = el("button",{class:"btn small ghost",type:"button",
+        onclick:()=>openPathPicker(inp)}, "Browse…");
+      form.append(el("div",{class:"field-row"},[inp, browseBtn]));
+      inputs[f.name] = {el: inp, type: f.type};
+    } else {
+      const inp = el("input",{type: f.type==="int"||f.type==="float" ? "number":"text",
+        step: f.type==="float" ? "any" : undefined,
+        value: f.default!=null?String(f.default):""});
+      form.append(inp);
+      inputs[f.name] = {el: inp, type: f.type};
+    }
+    if(f.help) form.append(el("div",{class:"helptext"}, f.help));
+  }
+
+  const runBtn = el("button",{class:"btn",style:"margin-top:18px;"}, "Run "+spec.name);
+  form.append(el("div",{},[runBtn]));
+  main.append(form);
+
+  const resultCard = el("div",{class:"card",style:"display:none;"});
+  main.append(resultCard);
+
+  runBtn.addEventListener("click", async ()=>{
+    const args = {};
+    for(const [k,v] of Object.entries(inputs)){
+      args[k] = v.type==="bool" ? v.el.checked : v.el.value;
+    }
+    runBtn.disabled = true; runBtn.textContent = "Starting…";
+    resultCard.style.display = "block";
+    resultCard.innerHTML = "Submitting job…";
+    try{
+      const job = await jpost("/api/run/"+spec.name, {args});
+      pollJob(job.id, resultCard, spec);
+    } catch(err){
+      resultCard.innerHTML = "";
+      resultCard.append(el("pre",{class:"result"}, "Request failed: "+err.message));
+    } finally {
+      runBtn.disabled = false; runBtn.textContent = "Run "+spec.name;
+    }
+  });
+}
+
+async function pollJob(jobId, container, spec){
+  container.innerHTML = "";
+  const statusLine = el("div",{style:"margin-bottom:10px;"});
+  const resultPre = el("pre",{class:"result"}, "Running…");
+  container.append(statusLine, resultPre);
+
+  const tick = async ()=>{
+    const job = await jget("/api/jobs/"+jobId);
+    statusLine.innerHTML = "";
+    statusLine.append(el("span",{class:"status "+job.status}, job.status),
+      el("span",{style:"color:var(--muted);margin-left:10px;font-size:12px;"}, job.id));
+    resultPre.textContent = job.result || job.error || "Running…";
+    if(job.status==="running" || job.status==="queued"){
+      setTimeout(tick, 1200);
+    } else {
+      GALLERY = null; // outputs likely changed; refetch next dashboard visit
+      appendOutputPreviews(container, spec, job);
+    }
+  };
+  tick();
+}
+
+async function appendOutputPreviews(container, spec, job){
+  const outFields = spec.fields.filter(f=>f.type==="path" && f.name.toLowerCase().includes("output"));
+  for(const f of outFields){
+    const val = job.args[f.name];
+    if(!val) continue;
+    let relPath;
+    try{ relPath = new URL("file://"+val).pathname; } catch { relPath = val; }
+    // val is an absolute path already (backend resolved it); try to browse it directly.
+    const label = el("h2",{}, f.name);
+    container.append(label);
+    try{
+      const data = await jget("/api/browse?path="+encodeURIComponent(val));
+      // it's a directory: show its files
+      const grid = el("div",{class:"grid"});
+      for(const e of data.entries){
+        if(e.is_dir) continue;
+        const kind = ({".png":"image",".csv":"csv",".json":"json",".html":"html",".md":"markdown"})[e.ext] || "text";
+        grid.append(el("div",{class:"thumb",onclick:()=>openPreview({name:e.name,path:e.path,kind}),style:kind==="image"?"":"padding:14px;"},
+          kind==="image" ? [el("img",{src:fileUrl(e.path)}), el("div",{class:"cap"},e.name)]
+                         : [el("div",{style:"font-size:26px;"},kindIcon(kind)), el("div",{class:"cap"},e.name)]));
+      }
+      container.append(grid);
+    } catch {
+      // it's (probably) a single file
+      const ext = "."+val.split(".").pop().toLowerCase();
+      const kind = ({".png":"image",".csv":"csv",".json":"json",".html":"html",".md":"markdown"})[ext] || "text";
+      const item = {name: val.split("/").pop(), path: val, kind};
+      const box = el("div",{class:"thumb",style:"max-width:340px;",onclick:()=>openPreview(item)},
+        kind==="image" ? [el("img",{src:fileUrl(item.path)}), el("div",{class:"cap"},item.name)]
+                       : [el("div",{style:"padding:14px;font-size:26px;"},kindIcon(kind)), el("div",{class:"cap"},item.name)]);
+      container.append(box);
+    }
+  }
+}
+
+// ------------------------------------------------------------- path picker --
+function openPathPicker(targetInput){
+  const root = document.getElementById("modal-root");
+  root.innerHTML = "";
+  const bg = el("div",{class:"modal-bg",onclick:(e)=>{if(e.target===bg) root.innerHTML="";}});
+  const modal = el("div",{class:"modal"});
+  modal.append(el("div",{class:"modal-head"},[el("b",{},"Choose a path"),
+    el("button",{class:"btn small",onclick:()=>root.innerHTML=""},"Close")]));
+  const body = el("div",{class:"modal-body"});
+  modal.append(body);
+  bg.append(modal); root.append(bg);
+
+  const selectRow = (path)=>{
+    targetInput.value = path;
+    root.innerHTML = "";
+  };
+
+  const load = async (path)=>{
+    body.innerHTML = "Loading…";
+    const data = await jget("/api/browse?path="+encodeURIComponent(path));
+    body.innerHTML = "";
+    body.append(el("div",{class:"crumb"},[
+      "/"+data.cwd+"  ",
+      el("button",{class:"btn small ghost",onclick:()=>selectRow(data.cwd)},"Use this folder")
+    ]));
+    if(data.parent!==null) body.append(el("div",{class:"browse-row",onclick:()=>load(data.parent)},"⬆️  .."));
+    for(const e of data.entries){
+      if(e.is_dir){
+        body.append(el("div",{class:"browse-row",onclick:()=>load(e.path)},"📁  "+e.name));
+      } else {
+        body.append(el("div",{class:"browse-row",onclick:()=>selectRow(e.path)},"📄  "+e.name));
+      }
+    }
+  };
+  load("");
+}
+
+// --------------------------------------------------------------------- boot --
+(async function boot(){
+  TOOLS = await jget("/api/tools");
+  renderNav();
+  setView("dashboard");
+})();
+</script>
+</body>
+</html>

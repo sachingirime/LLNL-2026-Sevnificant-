@@ -1,0 +1,21 @@
+# Core project dependencies (mirrors the repo's requirements.txt)
+numpy
+matplotlib
+fastmcp
+scikit-image
+tifffile
+scipy
+
+# Platform (backend web app)
+fastapi
+uvicorn[standard]
+pydantic
+
+# Optional, needed only for the 3D-preview tools (visualize_lattice_3d,
+# export_lattice_html). Skip these if you don't need those two tools --
+# every other tool works without them.
+# pyvista
+# trame
+# trame-vtk
+# trame-vuetify
+# nest_asyncio2

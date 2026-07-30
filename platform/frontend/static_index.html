@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lattice NDE Platform &mdash; results</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1c2540; --border:#2a3455;
+    --text:#e8ecf7; --muted:#8b95b8; --accent:#4f8cff; --accent2:#38d0c8;
+    --ok:#3ecf8e; --mono:'SFMono-Regular',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       background:var(--bg);color:var(--text);}
+  .wrap{max-width:1180px;margin:0 auto;padding:30px 26px 60px;}
+  h1{font-size:23px;margin:0 0 4px;}
+  h2{font-size:16px;margin:30px 0 10px;}
+  .sub{color:var(--muted);font-size:13.5px;margin-bottom:6px;}
+  .banner{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;
+          font-size:13px;color:var(--muted);margin:16px 0 6px;}
+  .banner b{color:var(--text);}
+  .banner code{background:var(--bg);padding:1px 6px;border-radius:5px;font-family:var(--mono);}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px;
+        margin-bottom:16px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;}
+  .thumb{background:var(--panel2);border:1px solid var(--border);border-radius:10px;overflow:hidden;
+         cursor:pointer;}
+  .thumb:hover{border-color:var(--accent);}
+  .thumb img{width:100%;height:130px;object-fit:cover;display:block;background:#0a0e18;}
+  .thumb .cap{padding:8px 10px;font-size:11.5px;color:var(--muted);word-break:break-all;}
+  .file-pill{display:flex;align-items:center;gap:8px;justify-content:space-between;padding:9px 12px;
+             background:var(--panel2);border:1px solid var(--border);border-radius:8px;cursor:pointer;
+             font-size:13px;margin-bottom:6px;}
+  .file-pill:hover{border-color:var(--accent);}
+  .badge{font-size:10.5px;padding:2px 7px;border-radius:20px;background:var(--border);color:var(--muted);
+         text-transform:uppercase;letter-spacing:.04em;}
+  .stage-block{margin-bottom:18px;}
+  .stage-title{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--accent2);
+               margin:0 0 8px;font-weight:700;}
+  .tool-card{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;
+             background:var(--panel2);}
+  .tool-card .name{font-family:var(--mono);font-weight:700;font-size:13px;}
+  .tool-card .summary{color:var(--muted);font-size:12.5px;margin-top:4px;}
+  .tool-card .params{color:var(--muted);font-size:11.5px;margin-top:6px;font-family:var(--mono);}
+  pre.result{background:#0a0e18;border:1px solid var(--border);border-radius:10px;padding:14px 16px;
+             font-family:var(--mono);font-size:12.3px;white-space:pre-wrap;word-break:break-word;
+             max-height:420px;overflow:auto;}
+  table.csv{border-collapse:collapse;font-size:12px;width:100%;}
+  table.csv td,table.csv th{border:1px solid var(--border);padding:4px 8px;text-align:left;white-space:nowrap;}
+  table.csv th{background:var(--panel2);position:sticky;top:0;}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;
+            justify-content:center;z-index:50;}
+  .modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;width:min(880px,92vw);
+         max-height:88vh;display:flex;flex-direction:column;}
+  .modal-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
+  .modal-body{overflow-y:auto;padding:16px;}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;
+       font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;}
+  .btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text);}
+  a{color:var(--accent2);}
+  iframe.preview{width:100%;height:520px;border:1px solid var(--border);border-radius:10px;background:#fff;}
+  footer{color:var(--muted);font-size:11.5px;margin-top:40px;text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Lattice NDE Platform</h1>
+  <div class="sub">X-ray CT lattice inspection &mdash; a static snapshot of everything computed so far.</div>
+  <div class="banner">
+    <b>This page is read-only.</b> It's rebuilt automatically from <code>outputs/</code> every time
+    something is pushed to <code>main</code>. New analyses run through Codex (CLI or Cloud) against
+    this repository &mdash; see <code>AGENTS.md</code> at the repo root for how an agent runs the
+    pipeline and publishes results here. There is no server behind this page.
+  </div>
+
+  <div id="reports"></div>
+  <div id="gallery"></div>
+  <div id="pipeline"></div>
+
+  <footer>Built by <code>platform/build_static_site.py</code>, published via GitHub Actions + GitHub Pages.</footer>
+</div>
+<div id="modal-root"></div>
+
+<script>
+function el(tag, attrs={}, children=[]){
+  const e = document.createElement(tag);
+  for(const [k,v] of Object.entries(attrs)){
+    if(k==="class") e.className=v;
+    else if(k==="html") e.innerHTML=v;
+    else if(k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k,v);
+  }
+  for(const c of [].concat(children)) if(c!=null) e.append(c.nodeType?c:document.createTextNode(c));
+  return e;
+}
+function kindIcon(kind){
+  return {image:"\u{1F5BC}", csv:"\u{1F4CA}", json:"\u{1F9FE}", markdown:"\u{1F4DD}",
+          html:"\u{1F310}", text:"\u{1F4C4}", docx:"\u{1F4D8}"}[kind] || "\u{1F4C4}";
+}
+function fileUrl(path){ return "files/"+path; }
+
+async function jget(url){ const r = await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+
+function renderCsvTable(txt){
+  const lines = txt.trim().split(/\r?\n/).slice(0,300);
+  const table = el("table",{class:"csv"});
+  lines.forEach((line,i)=>{
+    const cells = line.split(",");
+    const row = el("tr",{});
+    cells.forEach(c=> row.append(el(i===0?"th":"td",{}, c)));
+    table.append(row);
+  });
+  return table;
+}
+
+async function renderPreviewInto(container, item){
+  container.innerHTML = "Loading…";
+  try{
+    if(item.kind==="image"){
+      container.innerHTML=""; container.append(el("img",{src:fileUrl(item.path),style:"max-width:100%;border-radius:8px;"}));
+    } else if(item.kind==="html"){
+      container.innerHTML=""; container.append(el("iframe",{class:"preview",src:fileUrl(item.path)}));
+    } else if(item.kind==="csv"){
+      const txt = await (await fetch(fileUrl(item.path))).text();
+      container.innerHTML=""; container.append(renderCsvTable(txt));
+    } else if(item.kind==="docx"){
+      container.innerHTML = `<div style="color:var(--muted);font-size:13px;">Word document, not previewable here &mdash;
+        open <code>${item.path}</code> from the repository.</div>`;
+    } else {
+      const txt = await (await fetch(fileUrl(item.path))).text();
+      container.innerHTML="";
+      if(item.kind==="json"){
+        try{ container.append(el("pre",{class:"result"}, JSON.stringify(JSON.parse(txt), null, 2))); }
+        catch{ container.append(el("pre",{class:"result"}, txt)); }
+      } else {
+        container.append(el("pre",{class:"result"}, txt));
+      }
+    }
+  } catch(err){
+    container.innerHTML = "";
+    container.append(el("pre",{class:"result"}, "Could not load preview: "+err.message));
+  }
+}
+
+function openPreview(item){
+  const root = document.getElementById("modal-root");
+  root.innerHTML = "";
+  const bg = el("div",{class:"modal-bg",onclick:(e)=>{if(e.target===bg) root.innerHTML="";}});
+  const modal = el("div",{class:"modal"});
+  modal.append(el("div",{class:"modal-head"},[el("b",{},item.name),
+    el("div",{},[el("a",{href:fileUrl(item.path),target:"_blank",class:"btn ghost",style:"margin-right:8px;"},"Open raw"),
+      el("button",{class:"btn",onclick:()=>root.innerHTML=""},"Close")])]));
+  const body = el("div",{class:"modal-body"});
+  modal.append(body);
+  bg.append(modal); root.append(bg);
+  renderPreviewInto(body, item);
+}
+
+(async function boot(){
+  const [gallery, tools] = await Promise.all([
+    jget("gallery.json").catch(()=>({groups:[],reports:[]})),
+    jget("tools.json").catch(()=>[]),
+  ]);
+
+  const reportsRoot = document.getElementById("reports");
+  if(gallery.reports.length){
+    reportsRoot.append(el("h2",{},"Reports"));
+    const wrap = el("div",{class:"card"});
+    for(const r of gallery.reports){
+      wrap.append(el("div",{class:"file-pill",onclick:()=>openPreview(r)},
+        [kindIcon(r.kind)+"  "+r.name, el("span",{class:"badge"},r.kind)]));
+    }
+    reportsRoot.append(wrap);
+  }
+
+  const galRoot = document.getElementById("gallery");
+  galRoot.append(el("h2",{},`Computed outputs (${gallery.groups.length} folders)`));
+  if(gallery.groups.length===0){
+    galRoot.append(el("div",{class:"card"},"Nothing in outputs/ yet."));
+  }
+  for(const g of gallery.groups){
+    const section = el("div",{class:"card"});
+    section.append(el("div",{style:"font-family:var(--mono);font-size:12.5px;color:var(--muted);margin-bottom:10px;"}, g.dir));
+    const grid = el("div",{class:"grid"});
+    for(const it of g.items){
+      if(it.kind==="image"){
+        grid.append(el("div",{class:"thumb",onclick:()=>openPreview(it)},
+          [el("img",{src:fileUrl(it.path),loading:"lazy"}), el("div",{class:"cap"}, it.name)]));
+      } else {
+        grid.append(el("div",{class:"thumb",onclick:()=>openPreview(it),style:"padding:14px;"},
+          [el("div",{style:"font-size:26px;"}, kindIcon(it.kind)), el("div",{class:"cap"}, it.name)]));
+      }
+    }
+    section.append(grid);
+    galRoot.append(section);
+  }
+
+  const pipeRoot = document.getElementById("pipeline");
+  pipeRoot.append(el("h2",{},"Pipeline reference"));
+  pipeRoot.append(el("div",{class:"sub"},
+    "What each tool does, for reference. These run through Codex against this repo, not from this page."));
+  const stages = {};
+  for(const t of tools){ (stages[t.stage] ||= []).push(t); }
+  const pipeCard = el("div",{class:"card"});
+  for(const [stage, ts] of Object.entries(stages)){
+    const block = el("div",{class:"stage-block"});
+    block.append(el("div",{class:"stage-title"}, stage));
+    for(const t of ts){
+      const params = t.fields.map(f=>f.name+(f.required?"":"?")).join(", ");
+      block.append(el("div",{class:"tool-card"},[
+        el("div",{class:"name"}, t.name),
+        el("div",{class:"summary"}, t.summary),
+        el("div",{class:"params"}, params),
+      ]));
+    }
+    pipeCard.append(block);
+  }
+  pipeRoot.append(pipeCard);
+})();
+</script>
+</body>
+</html>
