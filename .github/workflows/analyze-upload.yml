@@ -48,11 +48,32 @@ jobs:
           prompt: |
             A new CT scan was just uploaded to this branch through the project's public
             dashboard, for on-demand defect analysis. Follow the conventions in AGENTS.md
-            at the repository root -- in particular: src/mcp_server.py is the tool set to
-            use (import it, call its functions directly), and NEVER report a defect count
-            from detect_lattice_defects / measure_lattice_iou / detect_missing_nodes
-            without first running refit_lattice_registration and passing its
-            correction.json through.
+            at the repository root, including its "On-demand analysis triggered from the
+            public dashboard" section.
+
+            This repo has more than raw functions to work with -- use what's already
+            built rather than reimplementing it:
+              - `.codex/agents/segmentation_agent.toml` and
+                `.codex/agents/visual_reasoner_agent.toml` are pre-defined subagents for
+                exactly the segmentation and visual-inspection steps below. Delegate to
+                them if that fits how this environment invokes subagents; if it doesn't
+                in this non-interactive context, follow their own instructions yourself
+                inline instead of skipping what they'd do.
+              - `.agents/skills/nde_report_expert/SKILL.md` defines this project's
+                existing convention for turning volume/mask/skeleton arrays into the
+                final report -- follow it for the report step rather than inventing a
+                different structure.
+              - `.agents/skills/threshold_optimizer` and `.agents/skills/metadata_extractor`
+                are relevant if the threshold hint is missing or the input needs
+                inspecting first.
+              - Everything above ultimately calls `src/mcp_server.py` (segment, slice,
+                skeletonize, rasterize, refit registration, measure IoU, classify
+                defects, detect missing nodes, render strut evidence). Call it directly
+                for anything not covered by a subagent/skill.
+            NEVER report a defect count from detect_lattice_defects / measure_lattice_iou
+            / detect_missing_nodes without first running refit_lattice_registration and
+            passing its correction.json through -- this is the single most common way to
+            get a meaningless result on this data (see AGENTS.md for why).
 
             Uploaded scan:      ${{ github.event.client_payload.tiff_path }}
             Design graph:       ${{ github.event.client_payload.design_path || 'none provided' }}
@@ -60,23 +81,21 @@ jobs:
             Write everything under: outputs/uploads/${{ github.event.client_payload.request_id }}/
 
             Do, in order, writing all outputs into that directory:
-            1. Segment the scan (segment_ct_dataset) and save 2-3 sanity-check slice
-               visualizations (visualize_slice) so a reviewer can see the mask is sane
-               before trusting anything downstream.
-            2. Skeletonize the segmentation (skeletonize).
+            1. Segment the scan and save 2-3 sanity-check slice visualizations so a
+               reviewer can see the mask is sane before trusting anything downstream.
+            2. Skeletonize the segmentation.
             3. Always run detect_missing_nodes_2d -- it needs no design file or
                registration, so it works regardless of what was uploaded, and is a useful
                cross-check even when a design graph IS available.
-            4. If (and only if) a design graph was provided: run
-               refit_lattice_registration FIRST, then measure_lattice_iou,
-               detect_lattice_defects, and detect_missing_nodes, all using the
-               correction.json the refit step produced. If no design graph was provided,
-               say so plainly in the report instead of guessing at one.
-            5. Write outputs/uploads/${{ github.event.client_payload.request_id }}/REPORT.md:
-               what you ran, the key numbers, and the caveats (registration applied or
-               not; resolution limits; anything the tool output flagged as uncertain).
-               Match the tone of the repo's own FINDINGS.md / FINAL_README.md -- state
-               numbers WITH their caveats, never as bare facts.
+            4. If (and only if) a design graph was provided: refit the registration
+               FIRST, then measure IoU, classify defects, and detect missing nodes, all
+               using the fresh correction. If no design graph was provided, say so
+               plainly in the report instead of guessing at one.
+            5. Write outputs/uploads/${{ github.event.client_payload.request_id }}/REPORT.md
+               following the nde_report_expert convention: feature-metrics summary table,
+               a small visual gallery, and an analysis section. Match the tone of the
+               repo's own FINDINGS.md / FINAL_README.md -- state numbers WITH their
+               caveats, never as bare facts.
             6. git add and git commit everything you wrote under
                outputs/uploads/${{ github.event.client_payload.request_id }}/ with a clear
                message. Do not modify or commit anything outside that directory.
@@ -96,6 +115,12 @@ jobs:
             --body "Automated analysis, submitted through the public dashboard and run by Codex (see \`.github/workflows/analyze-upload.yml\`).
 
           Results: \`outputs/uploads/${{ github.event.client_payload.request_id }}/REPORT.md\`
+
+          Want to ask follow-up questions or request a different analysis on this same
+          scan? This one-shot run can't hold a conversation, but if you have Codex Cloud
+          connected to this repo, open **https://chatgpt.com/codex**, start a task against
+          branch \`${{ github.event.client_payload.branch }}\`, and continue from there --
+          Codex Cloud keeps the environment and context across follow-up messages.
 
           ---
 

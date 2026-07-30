@@ -32,8 +32,17 @@ Three pieces, only one of which needs your own setup:
   setup, and the `OPENAI_API_KEY` repo secret it depends on.
 - `.github/workflows/analyze-upload.yml` -- runs when the Worker fires its event.
   Checks out the upload branch and runs Codex headlessly (`openai/codex-action`)
-  against it per `AGENTS.md`'s "on-demand analysis" section, then opens a PR instead
-  of pushing to `main` directly.
+  against it per `AGENTS.md`'s "on-demand analysis" section -- using the project's
+  existing subagents (`.codex/agents/`) and skills (`.agents/skills/`) where they
+  fit, not just raw tool calls -- then opens a PR instead of pushing to `main`
+  directly.
+
+This one-shot run can't hold a conversation (see `AGENTS.md` for why, and the upstream
+issue tracking a scriptable fix). For asking follow-up questions about a specific
+upload, the PR body and the dashboard's status panel both point at Codex Cloud
+directly (`chatgpt.com/codex`, connected to this repo, a task against that upload's
+branch) -- that's OpenAI's own follow-up-message feature, not something reimplemented
+here.
 
 One-time setup on GitHub for the page itself (independent of the Worker): repo
 Settings -> Pages -> Source -> **GitHub Actions**. After that, merging anything that

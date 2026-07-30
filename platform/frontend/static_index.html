@@ -287,6 +287,14 @@ async function pollForPR(branch, statusBox){
         appendStatus(statusBox, statusLine("ok", `Analysis complete -- `), [
           el("a",{href:pr.html_url,target:"_blank"}, `PR #${pr.number} is open for review`),
         ]);
+        appendStatus(statusBox, el("div",{class:"field helptext"},[
+          "Want to ask follow-up questions or try a different analysis on this same scan? ",
+          "This run can't hold a conversation by itself, but if Codex Cloud is connected ",
+          "to this repo, open ",
+          el("a",{href:"https://chatgpt.com/codex",target:"_blank"},"chatgpt.com/codex"),
+          `, start a task against branch `, el("code",{},branch),
+          ", and continue from there -- Codex Cloud keeps the environment and context across follow-up messages.",
+        ]));
         return;
       }
       if(pr.merged_at){

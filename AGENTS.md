@@ -88,6 +88,14 @@ workflow, here is what's expected of you, precisely:
   (may be absent), `threshold` (may be absent), and `request_id`.
 - **Output location**: everything you write goes under
   `outputs/uploads/<request_id>/`, nowhere else. Do not touch any other file.
+- **Use what's already built, not just raw functions**: `.codex/agents/segmentation_agent.toml`
+  and `.codex/agents/visual_reasoner_agent.toml` are pre-defined subagents for the
+  segmentation and visual-inspection steps; `.agents/skills/nde_report_expert/SKILL.md`
+  defines this project's own convention for the final report; `.agents/skills/threshold_optimizer`
+  and `.agents/skills/metadata_extractor` help when the threshold hint is missing.
+  Delegate to these where the invoking context supports it; where it doesn't, follow
+  their instructions yourself rather than skipping what they'd do. Everything ultimately
+  calls `src/mcp_server.py` for the parts not covered by a subagent/skill.
 - **Always run**, regardless of whether a design graph was supplied:
   segment -> a couple of sanity-check slice visualizations -> skeletonize ->
   `detect_missing_nodes_2d` (it needs no design file, so it's your baseline
@@ -96,9 +104,26 @@ workflow, here is what's expected of you, precisely:
   then `measure_lattice_iou`, `detect_lattice_defects`, and `detect_missing_nodes`,
   passing the fresh `correction.json` through to each. If no design graph came in,
   say so in the report rather than fabricating a registration.
-- **Write `REPORT.md`** in that same output directory, in the tone of `FINDINGS.md` /
-  `FINAL_README.md` -- numbers with their caveats, not bare claims.
+- **Write `REPORT.md`** in that same output directory, following the
+  `nde_report_expert` convention (feature-metrics table, small visual gallery,
+  analysis section) and the tone of `FINDINGS.md` / `FINAL_README.md` -- numbers
+  with their caveats, not bare claims.
 - **Commit only `outputs/uploads/<request_id>/`** and let the workflow push the
   branch and open the PR -- do not push directly to `main` yourself from this path.
   This is deliberate: an anonymous public upload should never publish straight to
   the results page without a person reviewing the PR first.
+
+### This is a one-shot run, not a conversation
+
+`openai/codex-action` runs `codex exec` once and exits -- it does not create a Codex
+Cloud task and there is no follow-up-message thread attached to it. If someone wants to
+keep asking questions about a specific upload after the PR is opened, the honest answer
+today is: point them at Codex Cloud directly (`https://chatgpt.com/codex`, connected to
+this repo, a new task against the `upload/<request_id>` branch) -- Codex Cloud's own
+follow-up-message feature keeps that environment and context alive across turns, which
+this one-shot Action deliberately does not try to reimplement. As of this writing there
+is no stable, public API for a script to create a Codex Cloud task and hand back a
+ready-made "continue this conversation" link (see
+[openai/codex#24777](https://github.com/openai/codex/issues/24777) -- environment/task
+lifecycle scripting is an open request, not yet shipped), so don't build automation that
+assumes one exists; check that issue's status before attempting it.
