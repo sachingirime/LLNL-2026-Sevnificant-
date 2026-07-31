@@ -1,0 +1,5 @@
+{"type": "user_prompt", "text": "In one line: what does AGENTS.md say is the one rule that matters?"}
+{"type":"thread.started","thread_id":"019fb671-68ca-7d20-8dfe-fea263cba001"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Defect detection must go through the MCP tools in `src/mcp_server.py`; do not reimplement or reconstruct it from `outputs/` files."}}
+{"type":"turn.completed","usage":{"input_tokens":15149,"cached_input_tokens":14080,"output_tokens":35,"reasoning_output_tokens":0}}

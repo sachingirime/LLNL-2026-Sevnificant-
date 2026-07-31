@@ -24,6 +24,12 @@
     </div>
   </div>
 
+  <nav class="tabs" role="tablist">
+    <button class="tab is-active" id="tab-btn-chat" role="tab" aria-selected="true">Chat</button>
+    <button class="tab" id="tab-btn-viz" role="tab" aria-selected="false">Visualizations</button>
+    <button class="tab" id="tab-btn-3d" role="tab" aria-selected="false">3D</button>
+  </nav>
+
   <div class="topbar-controls">
     <label class="field">
       <span class="field-label">Sandbox</span>
@@ -38,9 +44,12 @@
       <span class="thread-chip" id="thread-chip">new</span>
     </div>
     <button class="btn-ghost" id="new-thread" title="Start a fresh conversation">New thread</button>
-    <button class="btn-ghost" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+    <button class="btn-ghost" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">Theme</button>
   </div>
 </header>
+
+<!-- ============================ CHAT TAB ============================ -->
+<div id="panel-chat">
 
 <section class="stats" aria-label="Session summary">
   <div class="tile">
@@ -48,7 +57,7 @@
     <span class="tile-value" id="stat-turns">0</span>
   </div>
   <div class="tile">
-    <span class="tile-label">Tool calls</span>
+    <span class="tile-label">Actions</span>
     <span class="tile-value" id="stat-tools">0</span>
   </div>
   <div class="tile">
@@ -97,15 +106,19 @@
     </form>
   </section>
 
-  <section class="pane pane-timeline" aria-label="Agent activity">
+  <section class="pane pane-timeline" aria-label="Execution trace">
     <div class="pane-head">
-      <h2>Agent activity</h2>
-      <span class="pane-note" id="timeline-note">nothing yet</span>
+      <h2>Execution trace</h2>
+      <span class="pane-note" id="timeline-note">0 steps</span>
+      <button class="btn-ghost btn-export" id="export" disabled
+              title="Download this run as MEP-shaped JSONL">Export trace</button>
     </div>
     <div class="timeline" id="timeline">
       <div class="empty">
-        <p class="empty-body">Every command, tool call and file the agent touches shows up here as
-        it happens — streamed from <code>codex exec --json</code>.</p>
+        <p class="empty-body">Every action the agent takes and every observation it gets back lands
+        here as it happens, streamed from <code>codex exec --json</code> — the agent-side half of
+        the trajectory <code>(s₀, a₀, o₀, …, s_T)</code>. The MCP server records its own side in
+        <code>outputs/mep/</code>; this records who asked.</p>
       </div>
     </div>
     <details class="diagnostics" id="diagnostics" hidden>
@@ -115,7 +128,107 @@
   </section>
 </main>
 
+</div><!-- /panel-chat -->
+
+<!-- ======================= VISUALIZATION TAB ======================= -->
+<div id="panel-viz" hidden>
+
+  <section class="viz-controls">
+    <label class="field">
+      <span class="field-label">Detection run</span>
+      <select id="run-select"><option>loading…</option></select>
+    </label>
+    <span class="provenance" id="run-provenance"></span>
+    <button class="btn-ghost btn-run" id="run-detect"
+            title="Runs the canonical MCP pipeline in the Chat tab">Run detection via MCP</button>
+    <button class="btn-send btn-run" id="make-figures"
+            title="Render every figure for this run into its own directory">Generate figures</button>
+  </section>
+
+  <section class="figrun" id="figrun" hidden>
+    <div class="figrun-head">
+      <strong>Rendering figures</strong>
+      <span class="pane-note" id="figrun-note"></span>
+      <button class="btn-ghost" id="figrun-hide">Hide</button>
+    </div>
+    <div class="figrun-steps" id="figrun-steps"></div>
+    <div class="figrun-dir" id="figrun-dir" hidden>
+      <span class="field-label">Saved to</span>
+      <code id="figrun-path"></code>
+      <button class="btn-ghost" id="figrun-copy">Copy path</button>
+    </div>
+  </section>
+
+  <main class="viz-body">
+
+    <section class="card-panel" aria-label="Defect classes">
+      <div class="pane-head">
+        <h2>Defect classes</h2>
+        <span class="pane-note" id="class-note"></span>
+      </div>
+      <div class="hero" id="class-hero"></div>
+      <div class="class-rows" id="class-rows"></div>
+      <p class="class-context" id="class-context"></p>
+      <p class="footnote">Rules live in <code>scripts/classify_strut_defects.classify</code>,
+      applied severity-first. <code>missing</code> and <code>broken</code> rest on counts that are
+      zero or not — no threshold. <code>broken</code> is topological: no geodesic path through
+      material inside a tube of 2× the nominal radius.</p>
+    </section>
+
+    <section class="card-panel" aria-label="Class evidence">
+      <div class="pane-head">
+        <h2>What separates this class</h2>
+        <span class="pane-note" id="evidence-note">select a class</span>
+      </div>
+      <div class="evidence" id="evidence"></div>
+      <p class="evidence-note" id="evidence-why"></p>
+    </section>
+
+    <section class="card-panel" aria-label="Figures for this run">
+      <div class="pane-head">
+        <h2>Figures from this run</h2>
+        <span class="pane-note" id="run-figures-note"></span>
+      </div>
+      <div class="gallery-grid" id="run-figures"></div>
+    </section>
+
+    <section class="card-panel" aria-label="All visualizations in the repository">
+      <div class="pane-head">
+        <h2>Everything else in the repo</h2>
+        <span class="pane-note" id="gallery-note">scanning…</span>
+      </div>
+      <div id="gallery"></div>
+    </section>
+
+  </main>
+</div><!-- /panel-viz -->
+
+<!-- ============================ 3D TAB ============================ -->
+<div id="panel-3d" hidden>
+  <section class="viz-controls">
+    <label class="field">
+      <span class="field-label">Page</span>
+      <select id="view3d-select"><option>loading…</option></select>
+    </label>
+    <span class="provenance" id="view3d-note"></span>
+    <button class="btn-ghost" id="view3d-reload" title="Reload the embedded page">Reload</button>
+    <button class="btn-ghost" id="view3d-pop" title="Open this page in its own tab">Open in tab ↗</button>
+  </section>
+  <div class="view3d-frame">
+    <iframe id="view3d" title="Interactive 3D viewer"></iframe>
+    <div class="view3d-empty" id="view3d-empty">
+      <p class="empty-body">No interactive page in this run yet. Use <b>Generate figures</b>
+      on the Visualizations tab — it writes <code>strut_classes_interactive.html</code> and
+      <code>asbuilt_overlay.html</code> into the run directory.</p>
+    </div>
+  </div>
+</div>
+
 <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox-close" id="lightbox-close" aria-label="Close">✕</button>
+  <figure><img id="lightbox-img" alt=""><figcaption id="lightbox-cap"></figcaption></figure>
+</div>
 
 <script src="/static/app.js"></script>
 </body>

@@ -1,0 +1,14 @@
+{
+  "otsu_threshold": 40081.0,
+  "counts": {
+    "thick": 1402,
+    "nominal": 14825,
+    "missing": 412,
+    "broken": 159,
+    "thin": 1653,
+    "necked": 17
+  },
+  "total": 18468,
+  "tif": "/home/sachin/research/LLNL DSC 2026/llnl_data_science_challenge_2026/data/missing_struts/tif_stacks/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif",
+  "design": "/home/sachin/research/LLNL DSC 2026/llnl_data_science_challenge_2026/data/missing_struts/registered_jsons/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json"
+}

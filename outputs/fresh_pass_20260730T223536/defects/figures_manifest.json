@@ -1,0 +1,21 @@
+{
+  "run": "/home/sachin/research/LLNL DSC 2026/llnl_data_science_challenge_2026/outputs/fresh_pass_20260730T223536/defects",
+  "mask": "/home/sachin/research/LLNL DSC 2026/llnl_data_science_challenge_2026/outputs/fresh_pass_20260730T223536/mask.tif",
+  "correction": "/home/sachin/research/LLNL DSC 2026/llnl_data_science_challenge_2026/outputs/fresh_pass_20260730T223536/registration/correction.json",
+  "generated": "2026-07-30T23:00:12",
+  "figures": [
+    "ct_slice_x.png",
+    "ct_slice_y.png",
+    "ct_slice_z.png",
+    "defect_map.png",
+    "design_vs_ct.png",
+    "lattice_3d.png",
+    "missing_nodes_3d.png",
+    "node_gallery.png",
+    "node_health.png",
+    "node_map.png",
+    "quality_field.png",
+    "strut_classes.png",
+    "strut_classes_sections.png"
+  ]
+}
