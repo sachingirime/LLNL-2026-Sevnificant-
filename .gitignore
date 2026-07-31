@@ -175,3 +175,33 @@ result
 
 # Large local datasets (CT TIFFs, STLs, JSON) — not pushed to GitHub
 data/
+
+# Generated volume arrays. A full-resolution 9x9x9 mask is ~519 MB, well past
+# GitHub's 100 MB file limit — keep them local and share the PNG previews and
+# the manifest instead. (Already-tracked .npy files under outputs/ are
+# unaffected by this rule.)
+outputs/**/*.npy
+
+# Generated 3D viewers and filtered volumes -- large and reproducible from scripts/.
+# (outputs/**/*.npy is already ignored above.)
+outputs/**/*.html
+outputs/**/*.tif
+outputs/**/*.gif
+
+# Reference papers downloaded locally; not ours to redistribute.
+/fpde2013-*.pdf
+/s10439-*.pdf
+/2D_and_3D_Vascular_Structures_*.pdf
+/*.pdf
+outputs/literature/papers/
+
+# Editor/session cruft
+.Rhistory
+**/.Rhistory
+
+# Lattice NDE Platform: build artifacts and local-only state, not checked in.
+# (platform/build_static_site.py regenerates _site/ in CI on every deploy.)
+platform/_site/
+platform/.venv/
+platform/runs/*
+!platform/runs/.gitkeep
