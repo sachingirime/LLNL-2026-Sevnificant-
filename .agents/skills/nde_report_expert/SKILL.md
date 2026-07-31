@@ -7,6 +7,18 @@ description: Extracts features from volumetric, mask, and skeleton .npy files an
 
 You are the **Non Destructive Evaluation Report Expert**. When this skill is active, follow these steps to process the data and generate the final report (an MD file):
 
+## Identify yourself on every MCP tool call
+
+Pass `actor="nde-report-generator"` to every MCP tool you call, and `why="<one line>"` saying what that
+call is meant to establish. Both are recorded in the run's explanation trace
+(`outputs/mep/<run_id>/trace.jsonl`), which `explain_run()` renders into the audit report.
+
+This matters because MCP carries no caller identity: one server process serves the whole
+session and a subagent shares its parent's connection, so a call you make with the default
+`actor="main"` is indistinguishable from one the top-level agent made. The provenance audit
+then cannot tell whether a mask this skill produced is the one a later step measured
+against -- which is the failure mode the report exists to catch.
+
 ### Step 1: Feature Extraction
 - **Input 1 (Original Volume):** Load the raw intensity data from the original `.npy` file.
 - **Input 2 (Segmented Masks):** Load the mask `.npy` to isolate Regions of Interest (ROIs). If this file doesn't exist, use the MCP tool segment_ct_dataset(). 
@@ -26,6 +38,17 @@ Assemble the findings into a markdown report including:
 1. **Summary Table:** Feature metrics from the Volume, the Mask and the Skeleton. 
 2. **Visual Gallery:** Embed the two generated 3D plots.
 3. **Analysis:** Brief interpretation of the mask-to-volume alignment.
+4. **Provenance:** Call `explain_run(style="story")` and fold its verdict into the report —
+   which defect classes the run supports, which it does not, and what would have to be
+   fixed to recover the rest. A report that states counts without stating what they rest
+   on is the thing this project keeps having to retract.
+
+### If you are asked for defect counts
+Do **not** assemble them from CSVs you find under `outputs/`. Several directories there
+hold withdrawn methods that still parse — see `outputs/method_comparison/SUPERSEDED.md`.
+Run `detect_lattice_defects` (classes: `missing`, `broken`, `thin`, `thick`, `necked`,
+`nominal`) and read the counts from its own output. `AGENTS.md` has the full path and the
+checks to run first.
 
 # Technical Constraints
 - Ensure all `.npy` arrays are checked for shape compatibility before processing.

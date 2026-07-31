@@ -18,12 +18,24 @@ try:
     from . import lattice_iou
     from . import node_planes_2d
     from . import stl_ground_truth
+    from . import ct_filters
+    from . import check_tools
+    from . import mep
+    from . import mep_rubric
+    from . import mep_narrative
+    from .mep import mep_tool
 except ImportError:
     # Script import when FastMCP starts this file via ``python src/mcp_server.py``.
     from skeletonization import skeletonize_mask
     import lattice_iou
     import node_planes_2d
     import stl_ground_truth
+    import ct_filters
+    import check_tools
+    import mep
+    import mep_rubric
+    import mep_narrative
+    from mep import mep_tool
 
 # Initialize the MCP server
 mcp = FastMCP("CT Segmentation")
@@ -97,6 +109,7 @@ def _rasterize_struts(positions_zyx, strut_pairs, shape, radius_vox, origin):
 
 
 @mcp.tool()
+@mep_tool(kind="analysis")
 def segment_ct_dataset(input_filepath: str, output_filepath: str, threshold: float) -> str:
     """
     Segments a 3D CT dataset based on a given density threshold value.
@@ -170,6 +183,7 @@ def _volume_to_pv_surface(volume, max_dim):
 
 
 @mcp.tool()
+@mep_tool(kind="analysis")
 def rasterize_lattice(
     input_filepath: str,
     output_filepath: str,
@@ -284,6 +298,7 @@ def rasterize_lattice(
 
 
 @mcp.tool()
+@mep_tool(kind="view")
 def visualize_slice(input_filepath: str, output_filepath: str, slice_index: int, axis: int = 0) -> str:
     """
     Loads a 3D CT dataset from a .npy or .tif file and saves a visualization of a specific slice to an image file.
@@ -330,6 +345,7 @@ def visualize_slice(input_filepath: str, output_filepath: str, slice_index: int,
     return f"Saved slice {slice_index} (axis={axis}) visualization to {output_filepath}"
 
 @mcp.tool()
+@mep_tool(kind="view")
 def compare_slices(
     design_filepath: str,
     ct_mask_filepath: str,
@@ -483,6 +499,7 @@ def compare_slices(
 
 
 @mcp.tool()
+@mep_tool(kind="view")
 def visualize_lattice_3d(
     input_filepath: str,
     output_filepath: str,
@@ -582,6 +599,7 @@ def visualize_lattice_3d(
 
 
 @mcp.tool()
+@mep_tool(kind="view")
 def export_lattice_html(
     input_filepath: str,
     output_filepath: str,
@@ -661,6 +679,7 @@ def export_lattice_html(
 
 
 @mcp.tool()
+@mep_tool(kind="analysis")
 def skeletonize(input_filepath: str, output_filepath: str) -> str:
     """
     Creates a skeleton from a 3D segmentation mask.
@@ -708,6 +727,7 @@ def skeletonize(input_filepath: str, output_filepath: str) -> str:
 
 
 @mcp.tool()
+@mep_tool(kind="analysis")
 def measure_lattice_iou(
     mask_filepath: str,
     design_filepath: str,
@@ -826,6 +846,7 @@ def measure_lattice_iou(
 
 
 @mcp.tool()
+@mep_tool(kind="analysis")
 def refit_lattice_registration(
     mask_filepath: str,
     design_filepath: str,
@@ -925,6 +946,7 @@ def refit_lattice_registration(
 
 
 @mcp.tool()
+@mep_tool(kind="analysis")
 def detect_lattice_defects(
     mask_filepath: str,
     design_filepath: str,
@@ -934,6 +956,7 @@ def detect_lattice_defects(
     cell_mm: float = 4.56,
     sections: int = 25,
     tolerance_fraction: float = 0.25,
+    speck_voxels: int = 0,
     use_cache: bool = True,
 ) -> str:
     """
@@ -951,6 +974,16 @@ def detect_lattice_defects(
                empty. A count == 0, so there is NO threshold. Justified by the data: the
                struts at exactly zero are separated from the next value by a wide empty
                gap, so any cut inside it gives the same answer.
+
+               READ `speck_voxels` BEFORE QUOTING A MISSING RATE. At the default 0 this
+               rule demands *literally* zero matched voxels, and on this specimen five
+               struts have every one of their cross-sections empty while still holding 2
+               to 22 stray voxels out of ~1090 -- isolated segmentation noise, not
+               material. They fail the count test, fall through to the shape rules, and
+               come back as `thin` or `broken`: an empty strut reads as a thin one because
+               its median radius is 0. That is 89 missing instead of 94. The next strut
+               above the specks holds 75, so any `speck_voxels` in 22..75 separates the
+               two populations identically -- the choice is not a tuned threshold.
       broken   no geodesic path through material from one node to the other, inside a tube
                of 2x the nominal radius about the design axis. A boolean, so again NO
                threshold. This is topological and cannot be recovered from cross-sections:
@@ -989,6 +1022,13 @@ def detect_lattice_defects(
         output_directory: Written to as strut_classes.csv plus cached arrays.
         sections: Cross-sections per strut across the trimmed span.
         tolerance_fraction: Thin/thick band as a fraction of the nominal design diameter.
+        speck_voxels: Matched voxels a strut may hold and still count as `missing`, given
+            every one of its cross-sections is empty. 0 (the default) demands literally
+            nothing, which leaves five all-empty struts on this specimen labelled `thin`
+            or `broken` because they hold 2-22 voxels of segmentation noise. Anything in
+            22..75 puts them back in `missing` and changes nothing else -- the populations
+            are separated by a wide gap, so this is not a tuned cut. See the class notes
+            above.
         use_cache: Reuse sections.npz and connectivity.npz if present. A cache measured at
             a different section count is honoured at its own count, since a mismatch
             silently breaks both `missing` and the break rule.
@@ -1076,7 +1116,7 @@ def detect_lattice_defects(
         thick_um = (1 + tolerance_fraction) * nominal_um
         cuts = {"thin": thin_um / 2.0 / um, "thick": thick_um / 2.0 / um,
                 "neck": float(np.percentile(sec["r_eq_min"][ok], 1))}
-        lab = classify(sec, d["n_matched"], cuts, sections, 0, conn)
+        lab = classify(sec, d["n_matched"], cuts, sections, speck_voxels, conn)
 
         with open(os.path.join(output_directory, "strut_classes.csv"), "w") as fh:
             fh.write("strut_id,label,r_eq_med_um,measurable\n")
@@ -1131,6 +1171,7 @@ def detect_lattice_defects(
 
 
 @mcp.tool()
+@mep_tool(kind="analysis")
 def detect_missing_nodes(
     mask_filepath: str,
     design_filepath: str,
@@ -1477,6 +1518,7 @@ def _malformed_node_section(results_directory: str, show: int = 12, inc_bad=None
 
 
 @mcp.tool()
+@mep_tool(kind="analysis")
 def detect_missing_nodes_2d(
     mask_filepath: str,
     r_thr_vox: float = 0.0,
@@ -1605,6 +1647,7 @@ def detect_missing_nodes_2d(
 
 
 @mcp.tool()
+@mep_tool(kind="view")
 def visualize_strut_classes(
     mask_filepath: str,
     design_filepath: str,
@@ -1780,6 +1823,7 @@ def visualize_strut_classes(
 
 
 @mcp.tool()
+@mep_tool(kind="check")
 def validate_against_stl(
     nominal_design_filepath: str,
     stl_filepath: str,
@@ -1942,6 +1986,213 @@ def validate_against_stl(
     lines += ["", "  what the designed-out struts were actually labelled: "
                   + ", ".join(f"{k}={v}" for k, v in got.most_common())]
     return "\n".join(lines)
+
+
+@mcp.tool()
+@mep_tool(kind="analysis")
+def filter_ct_volume(
+    input_filepath: str,
+    output_filepath: str,
+    mode: str = "lowpass",
+    sigma_voxels: float = 2.0,
+    sigma_high_voxels: float = 0.0,
+    output_dtype: str = "",
+    slab_slices: int = 0,
+) -> str:
+    """
+    Low-pass, high-pass or band-pass filters a CT volume, out of core.
+
+    All three are built from one Gaussian:
+
+        lowpass    G(v, sigma)                    detail removed, noise suppressed
+        highpass   v - G(v, sigma)                what the low-pass discarded
+        bandpass   G(v, sigma) - G(v, sigma_high) one spatial scale kept
+
+    Gaussian rather than a Fourier Butterworth for a concrete reason: this volume is 519 M
+    voxels (1.04 GB as uint16, 2.08 GB as float32) and an FFT filter needs the whole array
+    resident plus a complex copy. A Gaussian is separable and local, so it runs on z slabs
+    with a halo and streams to disk -- peak memory is one slab, not one volume. The halo is
+    4 sigma, past which the kernel falls below this data's 16-bit quantisation, so the
+    slabbed result equals filtering the volume whole.
+
+    THE OUTPUT DTYPE IS A CORRECTNESS QUESTION, NOT A SIZE ONE. A high-pass or band-pass is
+    a residual about zero: roughly half its voxels are NEGATIVE. Writing that to uint16
+    does not compress it, it deletes them. So the default output dtype depends on the mode
+    -- uint16 for lowpass (a weighted mean of the input, so it stays in range, and the file
+    is the same size as the source), float32 for the signed modes. Asking for an unsigned
+    type with a signed mode is refused rather than silently clipped. int16 is offered for a
+    signed result at half the size; the tool reports how many voxels it had to clip so you
+    can tell whether that mattered.
+
+    .tif and .npy work for input and output and neither is more accurate. Prefer .tif: it
+    opens directly in ImageJ/Fiji and matches everything else in this project. Expect
+    ~2.08 GB for a float32 result on the 9x9x9 volume.
+
+    Scale reference for this data: strut radius ~3 voxels, junction radius ~8, unit cell
+    78. So sigma 1-2 smooths noise below the strut, sigma 5-10 in highpass removes
+    large-scale intensity drift while keeping strut edges.
+
+    Args:
+        input_filepath: CT volume .tif/.npy in (z, y, x). May be larger than RAM.
+        output_filepath: Where to write. Extension picks the container (.tif or .npy).
+        mode: "lowpass", "highpass" or "bandpass".
+        sigma_voxels: Gaussian sigma. For bandpass this is the NARROWER one.
+        sigma_high_voxels: The wider sigma, bandpass only. Must exceed sigma_voxels.
+        output_dtype: "float32", "int16" or "uint16". Empty picks per mode as above.
+        slab_slices: z slices per chunk. 0 auto-sizes from the halo.
+
+    Returns:
+        The plan actually used, the output statistics and any clipping, or an error.
+    """
+    if not os.path.isfile(input_filepath):
+        return f"Error: input file not found at {input_filepath}"
+    if not output_filepath.lower().endswith((".tif", ".tiff", ".npy")):
+        return (f"Error: output must be .tif or .npy (got {output_filepath}). The "
+                f"extension picks the container.")
+    if os.path.abspath(input_filepath) == os.path.abspath(output_filepath):
+        return "Error: refusing to overwrite the input volume in place."
+
+    dtype = output_dtype or ("uint16" if mode == "lowpass" else "float32")
+    sigma_high = sigma_high_voxels if mode == "bandpass" else None
+
+    try:
+        ext = os.path.splitext(input_filepath)[1].lower()
+        vol = (np.load(input_filepath, mmap_mode="r") if ext == ".npy"
+               else tifffile.memmap(input_filepath))
+    except (OSError, ValueError) as error:
+        return f"Error: could not open the input volume: {error}"
+    if vol.ndim != 3:
+        return f"Error: expected a 3-D volume, got shape {tuple(vol.shape)}"
+
+    try:
+        p = ct_filters.plan(vol.shape, mode, sigma_voxels, sigma_high, dtype,
+                            slab_slices or None)
+    except ValueError as error:
+        return f"Error: {error}"
+
+    out_dir = os.path.dirname(os.path.abspath(output_filepath))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    try:
+        p, s = ct_filters.filter_volume(vol, output_filepath, mode, sigma_voxels,
+                                        sigma_high, dtype, slab_slices or None,
+                                        log=lambda *_: None)
+    except (OSError, ValueError, MemoryError) as error:
+        return f"Error: filtering failed: {error}"
+
+    lines = [
+        f"Wrote {output_filepath}",
+        f"  {mode}  sigma {p['sigma']:g}"
+        + (f" -> {p['sigma_high']:g} voxels" if p["sigma_high"] else " voxels")
+        + f"   input {tuple(vol.shape)} {vol.dtype}",
+        f"  out dtype {p['dtype']} ({p['out_bytes'] / 1e9:.2f} GB)"
+        + ("   signed result -- an unsigned type would delete the negative half"
+           if p["signed"] else "   unsigned is safe here: a low-pass stays in range"),
+        f"  streamed in {p['n_passes']} x {p['slab']}-slice slabs with a {p['halo']}-voxel "
+        f"halo (4 sigma): {p['slab_bytes'] / 1e6:.0f} MB working set, not the "
+        f"{int(np.prod(vol.shape)) * 4 / 1e9:.2f} GB volume",
+        "",
+        f"  output: min {s['min']:.4g}  max {s['max']:.4g}  mean {s['mean']:.4g}  "
+        f"std {s['std']:.4g}",
+    ]
+    clipped = s["clipped_low"] + s["clipped_high"]
+    if clipped:
+        lines.append(
+            f"  CLIPPED {clipped} voxels ({100 * clipped / int(np.prod(vol.shape)):.4f}%) "
+            f"to fit {p['dtype']}: {s['clipped_low']} below, {s['clipped_high']} above. "
+            f"Re-run with output_dtype='float32' if that matters.")
+    elif np.dtype(p["dtype"]).kind in "iu":
+        lines.append(f"  no voxel needed clipping to fit {p['dtype']}")
+    if p["signed"]:
+        lines.append("  A high/band-pass is mean-zero by construction; a mean far from 0 "
+                     "means the halo was too small or the volume has a strong DC drift.")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------------
+# Verification checks.
+#
+# Registered from check_tools.py rather than defined here, and tagged kind="check"
+# so the run explanation can separate a step that makes a claim from one that tests
+# it. They are ordinary tools the agent chooses to call: whether a claim was checked
+# before it was believed is then a property of the trace, which is the thing being
+# explained. See src/mep.py and src/check_tools.py.
+# --------------------------------------------------------------------------------
+
+check_provenance = mcp.tool()(mep_tool(kind="check")(check_tools.check_provenance))
+check_alignment_residual = mcp.tool()(mep_tool(kind="check")(check_tools.check_alignment_residual))
+check_cache_staleness = mcp.tool()(mep_tool(kind="check")(check_tools.check_cache_staleness))
+check_coordinate_frame = mcp.tool()(mep_tool(kind="check")(check_tools.check_coordinate_frame))
+check_threshold_sensitivity = mcp.tool()(mep_tool(kind="check")(check_tools.check_threshold_sensitivity))
+check_detector_agreement = mcp.tool()(mep_tool(kind="check")(check_tools.check_detector_agreement))
+
+
+@mcp.tool()
+@mep_tool(kind="goal")
+def begin_analysis(user_prompt: str, goal: str = "") -> str:
+    """
+    Records what you were asked to do, at the start of an analysis. Call this FIRST,
+    before any other tool, whenever you begin work on a user's request.
+
+    An MCP server never sees the conversation -- a tool call carries a name and arguments
+    and nothing else. Without this, the run explanation can show every step that was taken
+    but not the question they were taken to answer, and cannot separate the settings the
+    user specified from the ones the agent chose on its own.
+
+    Pass the user's request as they wrote it. Do not summarise, tidy or expand it: the
+    point is to record what was actually asked, so a later reader can judge whether the
+    work answers it.
+
+    Args:
+        user_prompt: The user's request, verbatim.
+        goal: Optional one-line statement of how you are interpreting it -- which defect
+            classes, which specimen, what the deliverable is.
+
+    Returns:
+        Confirmation, with the run id the explanation will be filed under.
+    """
+    return (
+        f"Recorded the request for run {mep.run_id()}. "
+        f"Call explain_run() when finished to render the account of what was done."
+    )
+
+
+@mcp.tool()
+def explain_run(run_id: str = "", report_filepath: str = "", style: str = "story") -> str:
+    """
+    Renders the explanation for a run: what was asked, what was found, how the agent got
+    there, and which parts of the answer to rely on.
+
+    Reads the Minimal Explanation Packets recorded by every traced tool call. Two views
+    over the same trace:
+
+      story  (default) The account for whoever asked for the analysis. Leads with the
+             defect classes and their counts, then judges EACH CLASS SEPARATELY against
+             the checks that bear on it -- a failed threshold check undermines thin/thick/
+             necked/broken but leaves `missing` standing, so the reader is told which half
+             of the answer survives rather than that the run is bad. Also lists the
+             settings the agent chose that the request did not specify.
+
+      audit  The developer view: every step in order with its verification state, plus the
+             five behavioural rubrics. Use when debugging the agent rather than reading
+             the result.
+
+    Args:
+        run_id: Which run to explain. Empty means the current one.
+        report_filepath: If given, also write the HTML report here.
+        style: "story" or "audit".
+
+    Returns:
+        The rendered explanation.
+    """
+    if style not in ("story", "audit"):
+        return f"Error: style must be 'story' or 'audit' (got '{style}')."
+    try:
+        if style == "audit":
+            return mep_rubric.explain(run_id or None, report_filepath or None)
+        return mep_narrative.story(run_id or None, report_filepath or None)
+    except FileNotFoundError as exc:
+        return f"Error: {exc}"
 
 
 if __name__ == "__main__":

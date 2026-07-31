@@ -1,0 +1,205 @@
+% ---------------------------------------------------------------------------
+% Design intent versus as-built condition, 0.5% octet-truss specimen.
+%
+% Every number in this document is produced by
+%   outputs/stl_validation_20260730/validation.json  (CAD alignment and scoring)
+%   outputs/lattice_iou/strut_classes.csv            (CT classification)
+% via src/stl_ground_truth.py, the code the validate_against_stl MCP tool runs.
+%
+% Compile:  pdflatex validation_tables.tex
+% ---------------------------------------------------------------------------
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\captionsetup{font=small,labelfont=bf}
+\newcommand{\pct}[1]{#1\,\%}
+
+\title{Design intent versus as-built condition\\
+       of a 0.5\,\% octet-truss lattice}
+\author{X-ray CT defect classification, LLNL Data Science Challenge 2026}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Inputs}
+
+A single specimen, imaged once. The CT volume is
+\texttt{210127\_Brian\_Tran\_strut\_lattices\_0point5dash1 1 Slices.tif}
+($761\times815\times837$ voxels, \SI{58.2}{} \textmu m per voxel), segmented at the
+Otsu threshold 40\,127. The design is a graph of 10\,206 junctions and 18\,468 struts;
+the registered form of it is already in CT voxel coordinates, and a refitted
+registration correction is applied throughout. The CAD ground truth is
+\texttt{0.5.stl}: 3\,498\,656 triangles, bounding box
+$41.478\times51.040\times41.479$\,mm, giving \SI{2.3044}{}\,mm per design unit. Its long
+axis carries the build plates and is excluded from that scale.
+
+\section{Aligning the CAD to the design graph}
+
+Scale and centring come exactly off the bounding boxes---both objects are nominal CAD,
+so this is not a fit. What remains is one of the cube's 48 signed axis permutations, and
+it \emph{cannot} be resolved against a complete lattice, which is invariant under all 48.
+It is resolved instead against the defect pattern, using the detector's own \texttt{missing}
+calls as the reference (Table~\ref{tab:orient}).
+
+\begin{table}[h]
+\centering
+\caption{Orientation search over all 48 cube symmetries. Every candidate finds the same
+91 absent struts---the \emph{count} is invariant---but they are different struts in each
+case. The winner is ahead of the runner-up by a factor of seven against a chance
+expectation of 0.44, and it independently satisfies the plate-axis check: the STL's long
+axis maps onto the design's build axis, which no candidate is required to do.}
+\label{tab:orient}
+\small
+\begin{tabular}{llrr}
+\toprule
+Permutation & Signs & Matched (of 89) & Absent struts \\
+\midrule
+$(2,0,1)$ & $(-1,-1,-1)$ & \textbf{88} & 91 \\
+$(1,0,2)$ & $(+1,-1,+1)$ & 12 & 91 \\
+$(2,1,0)$ & $(-1,+1,+1)$ & 5  & 91 \\
+$(0,2,1)$ & $(+1,+1,-1)$ & 4  & 91 \\
+$(2,1,0)$ & $(-1,-1,-1)$ & 3  & 91 \\
+\midrule
+\multicolumn{2}{l}{Chance expectation} & 0.44 & \\
+\multicolumn{2}{l}{Plate-axis check (winner)} & \multicolumn{2}{l}{STL long axis $\to$ design $z$ \checkmark} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Designed-out struts}
+
+\begin{table}[h]
+\centering
+\caption{The blind check. The specimen is named \texttt{0point5dash1} and the CAD file
+\texttt{0.5.stl}; a nominal 0.5\,\% of 18\,468 struts is 92.3. The measured count owes
+nothing to the detector and was identical under all 48 candidate orientations.}
+\label{tab:designedout}
+\small
+\begin{tabular}{lrr}
+\toprule
+ & Struts & \% of 18\,468 \\
+\midrule
+Deleted from \texttt{0.5.stl} & \textbf{91} & \textbf{0.493} \\
+Nominal 0.5\,\% would be      & 92.3 & 0.500 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Design intent versus as built}
+
+\begin{table}[h]
+\centering
+\caption{Cells give the strut count with its percentage of that row's population. The
+four zero columns in the CAD rows are zero \emph{by construction}: a CAD file carries
+nominal geometry, so no strut in it can be thin, thick, broken or necked. Only
+\texttt{missing} is defined there.}
+\label{tab:main}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llrrrrrr}
+\toprule
+Source & Population & missing & broken & thin & thick & necked & nominal \\
+\midrule
+\multirow{2}{*}{\texttt{0.5.stl} (design intent)}
+ & all 18\,468        & 91 (0.49)  & 0 & 0 & 0 & 0 & 18\,377 (99.51) \\
+ & measurable 16\,733 & 89 (0.53)  & 0 & 0 & 0 & 0 & 16\,644 (99.47) \\
+\addlinespace
+\multirow{2}{*}{\texttt{CT} (as built)}
+ & measurable 16\,733 & 89 (0.53)  & 155 (0.93) & 1\,740 (10.40) & 350 (2.09)   & 11 (0.07) & 14\,388 (85.99) \\
+ & all 18\,468        & 412 (2.23) & 170 (0.92) & 1\,743 (9.44)  & 1\,378 (7.46) & 12 (0.07) & 14\,753 (79.88) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+The load-bearing result is the second column group onward: against a design that
+specifies zero, the print produced 155 severed, 1\,740 undersized, 350 oversized and 11
+locally pinched struts. That excess is one-directional, large, and independent of the
+alignment in Table~\ref{tab:orient}.
+
+\section{Why 1\,735 struts are not measurable}
+
+\begin{table}[h]
+\centering
+\caption{Categories overlap---847 struts fall under more than one---so the counts do not
+sum to the total. No strut is excluded for being defective; each is excluded because the
+measurement cannot be made. The final column shows the classes these struts were assigned
+anyway, which is what inflates the all-strut rows of Table~\ref{tab:main}.}
+\label{tab:exclusions}
+\small
+\begin{tabular}{lrl}
+\toprule
+Reason & Struts & Why the measurement fails \\
+\midrule
+Boundary cap    & 972    & Design graph extends past the printed outer skin \\
+Plate-embedded  & 788    & Surrounding plate fills the nominal cylinder either way \\
+Window-touching & 1\,054 & Cross-section window also contains neighbouring bulk \\
+Volume-clipped  & 0      & --- \\
+\midrule
+\textbf{Total excluded} & \textbf{1\,735} & 9.4\,\% of all struts \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.6em}
+\small
+Labels assigned to those 1\,735 struts: thick 1\,028, nominal 365, missing 323,
+broken 15, thin 3, necked 1. This accounts exactly for both inflations in
+Table~\ref{tab:main}: \texttt{thick} $350\to1\,378$ is $+1\,028$ window-touching struts,
+and \texttt{missing} $89\to412$ is $+323$ boundary caps where the design reaches past the
+part.
+\end{table}
+
+\section{Per-strut agreement}
+
+\begin{table}[h]
+\centering
+\caption{The \texttt{missing} call against the designed-out set, over the 16\,733
+measurable struts. Precision and recall are \emph{not} a blind test: the orientation in
+Table~\ref{tab:orient} was selected to maximise overlap with these same calls. The
+designed-out count in Table~\ref{tab:designedout} is the blind quantity.}
+\label{tab:confusion}
+\small
+\begin{tabular}{lrr}
+\toprule
+ & Designed out & Present in CAD \\
+\midrule
+Called \texttt{missing}     & 88 & 1 \\
+Not called \texttt{missing} & 1  & 16\,643 \\
+\midrule
+\multicolumn{3}{l}{Precision 0.989\quad Recall 0.989\quad F$_1$ 0.989} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+\textbf{The two counts of 89 are not the same 89.} Eighty-eight struts overlap; one
+strut the CAD deleted still shows material in the CT, and one the CT reads as empty is
+present in the CAD. The equality of the totals is coincidental: of the 91 designed-out
+struts, two fall outside the measurable population, and under other candidate
+orientations that number would have been one or three.
+
+\section{Limitations}
+
+\begin{enumerate}\itemsep2pt
+\item \textbf{One specimen, one ground truth.} There is a single CT volume with a single
+CAD file. No statistic here is repeated across specimens.
+\item \textbf{The alignment is not blind.} It is fixed using the detector's own
+\texttt{missing} calls, so precision and recall in Table~\ref{tab:confusion} inherit that
+choice. Only the designed-out count is independent.
+\item \textbf{Thickness classes sit near the resolution floor.} As-built struts are about
+2 voxels in radius against a nominal 3.01, so \texttt{thin}, \texttt{thick} and
+\texttt{necked} are weaker evidence than \texttt{missing} and \texttt{broken}.
+\item \textbf{No provenance record.} These results were produced by calling
+\texttt{src/stl\_ground\_truth.py} directly because the MCP server was not connected. The
+functions and their order are those of the \texttt{validate\_against\_stl} tool, but the
+run emitted no explanation packet and is not covered by the run-level checks.
+\end{enumerate}
+
+\end{document}

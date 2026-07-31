@@ -1,0 +1,27 @@
+nominal design: 10206 junctions, 18468 struts, span 18.0 design units
+0.5.stl: 3,498,656 triangles, bbox span [41.47800064086914, 51.040000915527344, 41.479000091552734] mm
+  2.3044 mm per design unit
+detector: 89 usable 'missing' calls of 16940 usable struts
+
+searching all 48 orientations (this is the slow part) ...
+  winner  perm (2, 0, 1) signs (-1, -1, -1): matches 88 of 89 detected
+  runner-up 12   chance expectation 0.44
+  top 5:
+    matched   88  perm (2, 0, 1) signs (-1, -1, -1)  -> 91 absent
+    matched   12  perm (1, 0, 2) signs (1, -1, 1)  -> 91 absent
+    matched    5  perm (2, 1, 0) signs (-1, 1, 1)  -> 91 absent
+    matched    4  perm (0, 2, 1) signs (1, 1, -1)  -> 91 absent
+    matched    3  perm (2, 1, 0) signs (-1, -1, -1)  -> 91 absent
+  independent plate-axis check: STL plate axis -> design z  (the build axis, as it must be)
+
+DESIGNED OUT: 91 of 18468 (0.493%)  [90 usable, 1 excluded]
+
+  class      predicted    TP    FP    FN   precision  recall      F1
+  missing          89    88     1     2     0.989   0.978   0.983
+  broken          163     2   161    88     0.012   0.022   0.016
+  thin           1740     0  1740    90     0.000   0.000   0.000
+  thick           498     0   498    90     0.000   0.000   0.000
+  necked           11     0    11    90     0.000   0.000   0.000
+  nominal       14439     0 14439    90     0.000   0.000   0.000
+
+  what the designed-out struts were actually labelled: missing=88, broken=2

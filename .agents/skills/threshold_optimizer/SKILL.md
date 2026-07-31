@@ -7,6 +7,18 @@ description: Sweeps a range of segmentation thresholds over a CT volume, renders
 
 You are the **Segmentation Threshold Optimizer**. Picking a density threshold by hand is guesswork; this skill runs a controlled sweep and reports which value best separates lattice material from background.
 
+## Identify yourself on every MCP tool call
+
+Pass `actor="threshold-optimizer"` to every MCP tool you call, and `why="<one line>"` saying what that
+call is meant to establish. Both are recorded in the run's explanation trace
+(`outputs/mep/<run_id>/trace.jsonl`), which `explain_run()` renders into the audit report.
+
+This matters because MCP carries no caller identity: one server process serves the whole
+session and a subagent shares its parent's connection, so a call you make with the default
+`actor="main"` is indistinguishable from one the top-level agent made. The provenance audit
+then cannot tell whether a mask this skill produced is the one a later step measured
+against -- which is the failure mode the report exists to catch.
+
 ### Step 1: Profile the Input
 
 Before choosing any thresholds, load the input `.npy` or `.tif` and report:
@@ -73,4 +85,6 @@ Write `outputs/threshold_sweep/<dataset>/report.md` containing:
 - Segmentation masks are full-size. A single 9x9x9 mask is ~496 MB, so a five-point sweep writes ~2.5 GB. Confirm with the user before sweeping any volume larger than 256^3, and default to `data/unitcell/unitcell.npy` when no dataset is named. If the large volume is swept, offer to delete each mask after recording its voxel count and rendering its slice.
 - Report the tool's returned status string verbatim for each run. If a call returns a string starting with `Error:`, stop and surface it rather than continuing the sweep.
 - Use the MCP tools `segment_ct_dataset()` and `visualize_slice()` directly. Do not reimplement thresholding in a local script.
+- Before recommending a threshold, call `check_threshold_sensitivity(input_filepath=..., threshold=<your pick>)`. It re-measures the foreground fraction at ±10% and reports whether the cut sits on a plateau or a slope. A cut on a plateau is a property of the specimen; one on a slope is a property of whoever picked it, and the recommendation must say which it is. Report its verdict verbatim alongside the recommendation.
+- A failing sensitivity check does not invalidate everything downstream. `missing` is a voxel count against zero with a wide empty gap below the next strut, so no cut inside that gap moves it. `thin`, `thick`, `necked` and `broken` all move. Say which classes your recommendation can and cannot support.
 - If you created any temporary Python scripts, remove them once you are finished.

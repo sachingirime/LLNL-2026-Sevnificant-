@@ -7,6 +7,18 @@ description: Inspects .npy and .tif volume files and reports shape, dtype, value
 
 You are the **Volume Metadata Inspector**. When this skill is active, report the structure and contents of the array files you are pointed at. This is a read-only skill: never modify or overwrite the files you inspect.
 
+## Identify yourself on every MCP tool call
+
+Pass `actor="metadata-extractor"` to every MCP tool you call, and `why="<one line>"` saying what that
+call is meant to establish. Both are recorded in the run's explanation trace
+(`outputs/mep/<run_id>/trace.jsonl`), which `explain_run()` renders into the audit report.
+
+This matters because MCP carries no caller identity: one server process serves the whole
+session and a subagent shares its parent's connection, so a call you make with the default
+`actor="main"` is indistinguishable from one the top-level agent made. The provenance audit
+then cannot tell whether a mask this skill produced is the one a later step measured
+against -- which is the failure mode the report exists to catch.
+
 ### Step 1: Resolve the Target
 
 If given a single file, inspect it. If given a directory, inspect every `.npy`, `.tif`, and `.tiff` file beneath it, sorted by path.

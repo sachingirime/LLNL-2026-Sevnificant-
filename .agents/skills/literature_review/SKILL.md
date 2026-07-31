@@ -12,6 +12,18 @@ data already in this repository can prove wrong.
 
 A method that cannot be falsified on our data is not a candidate, however well cited.
 
+## Identify yourself on every MCP tool call
+
+Pass `actor="literature-review"` to every MCP tool you call, and `why="<one line>"` saying what that
+call is meant to establish. Both are recorded in the run's explanation trace
+(`outputs/mep/<run_id>/trace.jsonl`), which `explain_run()` renders into the audit report.
+
+This matters because MCP carries no caller identity: one server process serves the whole
+session and a subagent shares its parent's connection, so a call you make with the default
+`actor="main"` is indistinguishable from one the top-level agent made. The provenance audit
+then cannot tell whether a mask this skill produced is the one a later step measured
+against -- which is the failure mode the report exists to catch.
+
 ## Why this protocol exists
 
 Three detection methods were built on this project and all three were withdrawn after
@@ -60,7 +72,7 @@ it anyway.
 | registration (design→CT) | exact globally; **local offset 0→3 vox, rising monotonically along x** | design-referenced methods need per-region validation, never a global residual |
 | solid end plates | 34.6% / 24.3% material vs ~5% in the lattice | vesselness erases them (94% / 100%); any global statistic is contaminated by them |
 | published rates (this specimen) | 0.57% missing, 4.97% disconnected | the target to reproduce — **never tune a threshold until it matches** |
-| simulated unit cells | 17.8 µm/vox, one labelled defect per volume, all 5 classes | the only ground truth in the repo, and the only place thin/dross/bent are resolvable |
+| simulated unit cells | 17.8 µm/vox, one labelled defect per volume, all 5 classes | the only place thin/dross/bent are resolvable; the real specimen's ground truth is the `0.stl` vs `0.5.stl` diff, scored by `validate_against_stl` |
 
 ## Step 3: Search these areas
 

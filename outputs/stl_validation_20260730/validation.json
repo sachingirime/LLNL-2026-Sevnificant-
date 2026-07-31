@@ -1,0 +1,73 @@
+{
+ "perm": [
+  2,
+  0,
+  1
+ ],
+ "signs": [
+  -1,
+  -1,
+  -1
+ ],
+ "matched": 88,
+ "runner_up": 12,
+ "chance": 0.4385423435131037,
+ "plate_axis_ok": true,
+ "designed_out": 91,
+ "scores": {
+  "missing": {
+   "tp": 88,
+   "fp": 1,
+   "fn": 2,
+   "precision": 0.9887640449438202,
+   "recall": 0.9777777777777777,
+   "f1": 0.9832402234636872,
+   "n_pred": 89
+  },
+  "broken": {
+   "tp": 2,
+   "fp": 161,
+   "fn": 88,
+   "precision": 0.012269938650306749,
+   "recall": 0.022222222222222223,
+   "f1": 0.015810276679841896,
+   "n_pred": 163
+  },
+  "thin": {
+   "tp": 0,
+   "fp": 1740,
+   "fn": 90,
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": 0.0,
+   "n_pred": 1740
+  },
+  "thick": {
+   "tp": 0,
+   "fp": 498,
+   "fn": 90,
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": 0.0,
+   "n_pred": 498
+  },
+  "necked": {
+   "tp": 0,
+   "fp": 11,
+   "fn": 90,
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": 0.0,
+   "n_pred": 11
+  },
+  "nominal": {
+   "tp": 0,
+   "fp": 14439,
+   "fn": 90,
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": 0.0,
+   "n_pred": 14439
+  }
+ }
+}

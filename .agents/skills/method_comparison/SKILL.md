@@ -13,6 +13,18 @@ Your product is a **comparison**, not a champion. A method that fails is a resul
 down with the number that killed it. Three methods have already been withdrawn from this
 project because nobody checked whether their measurement could support their claim.
 
+## Identify yourself on every MCP tool call
+
+Pass `actor="method-comparison"` to every MCP tool you call, and `why="<one line>"` saying what that
+call is meant to establish. Both are recorded in the run's explanation trace
+(`outputs/mep/<run_id>/trace.jsonl`), which `explain_run()` renders into the audit report.
+
+This matters because MCP carries no caller identity: one server process serves the whole
+session and a subagent shares its parent's connection, so a call you make with the default
+`actor="main"` is indistinguishable from one the top-level agent made. The provenance audit
+then cannot tell whether a mask this skill produced is the one a later step measured
+against -- which is the failure mode the report exists to catch.
+
 ---
 
 ## Step 1: Read the shortlist first
@@ -33,7 +45,8 @@ the eight-item failure-mode checklist. Do not restate those numbers from memory.
 ## Step 2: Use exactly this data
 
 **Registered pair** — the design JSON is already in the CT's voxel frame, so `scale = 1.0`
-and `offset = 0,0,0`. No registration fitting is required or wanted.
+and `offset = 0,0,0`. No *global* re-registration is required or wanted. A small **residual
+correction** is a different matter and IS required — see below.
 
 | role | path |
 | :--- | :--- |
@@ -50,15 +63,26 @@ Verified facts you can rely on, so do not re-derive them:
   `unit_cell_edge_idx` values occurring in under half the modal count; about half are never
   printed, so report them separately or exclude them).
 - Junction `position` is `(x, y, z)`; reorder `[2,1,0]` to index `vol[z, y, x]`.
-- Registration is exact globally but drifts **0 → 3 vox along x**. Sample a tube of radius
-  2–3 vox, never a single voxel.
+- **A residual node offset remains, and it grows along x.** Measured against the mask: each
+  graph node sits a median **1.19 vox** from the material it names, rising **0.70 → 2.35 vox**
+  from the near to the far x face. Applying `outputs/registration/correction.json` flattens
+  this to **0.48 vox, uniform** (slope +0.01 vox across the whole span). Skipping it is not
+  free — measured on this specimen it flips **1 strut in 11** at the far face, inflates
+  `broken` from 107 to 283, and drops 2,327 struts out of the measurable population. Always
+  pass `correction_filepath`, and sample a tube of radius 2–3 vox rather than a single voxel.
 - Solid end plates occupy z < ~95 and z > ~665 (34.6% / 24.3% material vs ~5% in the
   lattice). Exclude them from any population statistic or it will be contaminated.
 
 For calibration and for the classes the real specimen cannot resolve, use the labelled
 simulated set: `data/PacificVis Datasets/octet unit cell with defects/` — six volumes,
-17.8 µm/vox, **one defect per volume with the class in the filename**. This is the only
-ground truth in the repository.
+17.8 µm/vox, **one defect per volume with the class in the filename**.
+
+For the real specimen there is one ground truth: the `0.stl` vs `0.5.stl` diff gives the
+designed-missing set exactly, scored by the `validate_against_stl` tool (which takes the
+**nominal** design, `data/missing_struts/octet_truss_9x9x9.json`, not the registered one).
+Use it for per-strut precision and recall — never validate on an aggregate percentage
+alone. The 8×8×8 PacificVis files are simulated, unregistered, and their labels were never
+derived; they are not a second validated specimen.
 
 ## Step 3: Reuse what exists — do not rebuild it
 
@@ -71,11 +95,44 @@ ground truth in the repository.
 | `scripts/overlay_webgl.py` | design lines over the solid mask; `--table` optional for class colouring |
 | `scripts/mesh_webgl.py` | any volume → self-contained WebGL2 mesh viewer |
 | `scripts/graph_webgl.py` | strut graph → WebGL2 line viewer with per-class toggles |
-| MCP tools in `src/mcp_server.py` | `segment_ct_dataset`, `rasterize_lattice`, `visualize_slice`, `compare_slices`, `visualize_lattice_3d`, `export_lattice_html`, `skeletonize` |
+| MCP tools in `src/mcp_server.py` | see the full list below — it is longer than this skill originally assumed |
 
 Note `segment_ct_dataset` takes an explicit threshold — it has no Otsu inside — and
 `skeletonize` accepts `.npy` only. Use the `threshold-optimizer` skill when a threshold is
 unknown; simulated volumes need ~0.0058, the real CT needs 40127.
+
+### The MCP tools, in full
+
+An earlier version of this skill listed seven tools and omitted the detector. An agent
+following it read stale CSVs out of `outputs/method_comparison/` and wrote a report from
+them without running anything. The current set:
+
+| Group | Tools |
+| :--- | :--- |
+| Goal and explanation | `begin_analysis`, `explain_run` |
+| Segmentation | `segment_ct_dataset`, `filter_ct_volume` |
+| Design and registration | `rasterize_lattice`, `refit_lattice_registration` |
+| **Detection** | **`detect_lattice_defects`**, `measure_lattice_iou`, `detect_missing_nodes`, `detect_missing_nodes_2d`, `skeletonize` |
+| Ground truth | `validate_against_stl` |
+| Verification | `check_provenance`, `check_alignment_residual`, `check_cache_staleness`, `check_coordinate_frame`, `check_threshold_sensitivity`, `check_detector_agreement` |
+| Visualisation | `visualize_slice`, `compare_slices`, `visualize_lattice_3d`, `visualize_strut_classes`, `export_lattice_html` |
+
+**`detect_lattice_defects` is the current strut detector.** It classifies all 18,468
+struts into `missing`, `broken`, `thin`, `thick`, `necked`, `nominal`; the rules are in
+`scripts/classify_strut_defects.classify`. Any new method is compared *against* it, not
+in place of it.
+
+Call `begin_analysis` before anything else and `explain_run` at the end, and pass `actor=`
+and `why=` on every call. Run the relevant checks before quoting a rate — `AGENTS.md`
+lists which check guards which claim.
+
+### Superseded results in `outputs/method_comparison/`
+
+The `tube_connectivity/`, `edt_radius/` and `strut_aligned_2d_projection/` directories
+hold **withdrawn** methods. Their CSVs parse and look authoritative. Read
+`outputs/method_comparison/SUPERSEDED.md` before touching them, and never assemble a
+report from them. If you see 277 missing / 1,008 disconnected, or a 13,932-strut
+population, you are reading superseded output.
 
 ## Step 4: Implement both families
 
@@ -100,7 +157,9 @@ family end-on in turn.
 ## Step 5: One common output schema
 
 Every method writes the same per-strut table so results are comparable rather than merely
-adjacent. One row per strut, all 18,468, in `outputs/method_comparison/<method>/struts.csv`:
+adjacent. One row per strut, all 18,468, in `outputs/method_comparison_<date>/<method>/struts.csv`
+— a **fresh** directory. Do not write into `outputs/method_comparison/`: it holds withdrawn
+results that must stay distinguishable from new ones.
 
 ```
 strut_id, is_boundary_cap, in_plate_region, midpoint_z, midpoint_y, midpoint_x,
@@ -116,7 +175,7 @@ without recomputing anything.
 
 ## Step 6: Compare
 
-Produce `outputs/method_comparison/README.md` containing:
+Produce `outputs/method_comparison_<date>/README.md` containing:
 
 1. **Method table** — one row per method: inputs used, runtime, defect classes it produced,
    counts and rates per class, and whether **its stated prediction from the review held**.

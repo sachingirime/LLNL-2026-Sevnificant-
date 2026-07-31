@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex dashboard — LLNL DSC 2026</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // Stamp the saved theme before first paint so the page never flashes.
+  try {
+    var t = localStorage.getItem("codex-dash-theme");
+    if (t) document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot" aria-hidden="true"></span>
+    <div>
+      <h1>Codex dashboard</h1>
+      <p class="brand-sub" id="repo-line">loading repo…</p>
+    </div>
+  </div>
+
+  <div class="topbar-controls">
+    <label class="field">
+      <span class="field-label">Sandbox</span>
+      <select id="sandbox">
+        <option value="read-only">read-only</option>
+        <option value="workspace-write">workspace-write</option>
+        <option value="danger-full-access">danger-full-access</option>
+      </select>
+    </label>
+    <div class="field">
+      <span class="field-label">Thread</span>
+      <span class="thread-chip" id="thread-chip">new</span>
+    </div>
+    <button class="btn-ghost" id="new-thread" title="Start a fresh conversation">New thread</button>
+    <button class="btn-ghost" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
+
+<section class="stats" aria-label="Session summary">
+  <div class="tile">
+    <span class="tile-label">Turns</span>
+    <span class="tile-value" id="stat-turns">0</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Tool calls</span>
+    <span class="tile-value" id="stat-tools">0</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Output tokens</span>
+    <span class="tile-value" id="stat-output">0</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Elapsed</span>
+    <span class="tile-value" id="stat-elapsed">—</span>
+  </div>
+
+  <figure class="chart" id="token-chart-wrap" hidden>
+    <figcaption class="chart-title">Input tokens per turn</figcaption>
+    <div class="legend">
+      <span class="legend-item"><i class="swatch swatch-cached"></i>Cached</span>
+      <span class="legend-item"><i class="swatch swatch-fresh"></i>Fresh</span>
+    </div>
+    <div class="bars" id="token-bars"></div>
+  </figure>
+</section>
+
+<main class="panes">
+  <section class="pane pane-chat" aria-label="Conversation">
+    <div class="pane-head">
+      <h2>Conversation</h2>
+      <span class="pane-note" id="chat-note">read-only sandbox</span>
+    </div>
+
+    <div class="transcript" id="transcript">
+      <div class="empty" id="chat-empty">
+        <p class="empty-title">Ask the agent about this repository.</p>
+        <p class="empty-body">Codex runs in <code>read-only</code> by default — it can read every
+        file and run shell commands, but cannot write. Switch the sandbox above when you want it
+        to produce outputs.</p>
+        <div class="chips" id="suggestions"></div>
+      </div>
+    </div>
+
+    <form class="composer" id="composer">
+      <textarea id="prompt" rows="3" placeholder="Ask about the code, or tell the agent to run something…  (Enter to send, Shift+Enter for a newline)"></textarea>
+      <div class="composer-row">
+        <span class="composer-hint" id="composer-hint"></span>
+        <button type="button" class="btn-cancel" id="cancel" hidden>Stop</button>
+        <button type="submit" class="btn-send" id="send">Send</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="pane pane-timeline" aria-label="Agent activity">
+    <div class="pane-head">
+      <h2>Agent activity</h2>
+      <span class="pane-note" id="timeline-note">nothing yet</span>
+    </div>
+    <div class="timeline" id="timeline">
+      <div class="empty">
+        <p class="empty-body">Every command, tool call and file the agent touches shows up here as
+        it happens — streamed from <code>codex exec --json</code>.</p>
+      </div>
+    </div>
+    <details class="diagnostics" id="diagnostics" hidden>
+      <summary>Diagnostics <span class="count" id="diag-count">0</span></summary>
+      <pre id="diag-body"></pre>
+    </details>
+  </section>
+</main>
+
+<div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
