@@ -1,0 +1,1 @@
+Look for literature that uses segmentation methods on octet struts in CT scan images, and tell me what segmentation maps or threshold-determination approaches they use. Give me a literature review of all the methods others have used in this domain.
